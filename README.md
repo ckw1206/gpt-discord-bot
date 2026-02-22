@@ -61,6 +61,14 @@ Or run local models with:
 
 ---
 
+### Clear conversation history with `/clear`:
+Use `/clear` to reset the conversation history and message cache. This is useful when:
+- The bot seems stuck with warning messages
+- You shared an image but then switched to a non-vision model (result: "⚠️ Can't see images" warning)
+- You want to start a completely fresh conversation without context from previous messages
+
+---
+
 ### And more:
 - Supports image attachments when using a vision model (like gpt-5, grok-4, claude-4, etc.)
 - Supports text file attachments (.txt, .py, .c, etc.)
@@ -103,7 +111,7 @@ Or run local models with:
 | --- | --- |
 | **providers** | Add the LLM providers you want to use, each with a `base_url` and optional `api_key` entry. Popular providers (`openai`, `openrouter`, `ollama`, etc.) are already included.<br /><br />**Only supports OpenAI compatible APIs.**<br /><br />**Some providers may need `extra_headers` / `extra_query` / `extra_body` entries for extra HTTP data. See the included `azure-openai` provider for an example.** |
 | **models** | Add the models you want to use in `<provider>/<model>: <parameters>` format (examples are included). When you run `/model` these models will show up as autocomplete suggestions.<br /><br />**Refer to each provider's documentation for supported parameters.**<br /><br />**The first model in your `models` list will be the default model at startup.**<br /><br />**Some vision models may need `:vision` added to the end of their name to enable image support.** |
-| **system_prompt** | Write anything you want to customize the bot's behavior!<br /><br />**Leave blank for no system prompt.**<br /><br />**You can use the `{date}` and `{time}` tags in your system prompt to insert the current date and time, based on your host computer's time zone.** |
+| **system_prompt** | *(Optional)* Customize the bot's behavior with a custom system prompt. Leave empty, blank, or remove entirely to use the model's default system prompt.<br /><br />**You can use the `{date}` and `{time}` tags in your system prompt to insert the current date and time, based on your host computer's time zone.**<br /><br />**Example:** `system_prompt: "You are a helpful assistant"` |
 
 ### Scheduled tasks (optional):
 
@@ -161,7 +169,14 @@ scheduled_tasks:
 
 - If you're having issues, try my suggestions [here](https://github.com/jakobdylanc/llmcord/issues/19)
 
-- For scheduled DM tasks, make sure the bot has permission to send DMs. Users may need to accept DMs from Discord bots in their privacy settings.
+- **Persistent "⚠️ Can't see images" warning:** If you shared an image but your current model is not a vision model (like `gpt-4`, `claude`, `gemini`, etc.), the bot can't process the image and shows a warning. Run `/clear` to clear the message cache and start fresh.
+
+- **Scheduled task DM issues:** If you get "Cannot send messages to this user" error when using `user_id` for scheduled tasks, the issue is likely one of:
+  - **User has DMs disabled from bots** - Go to Discord settings → Privacy & Safety → Allow Direct Messages from server members (toggle on)
+  - **Bot is blocked** - The user blocked the bot, so unblock it
+  - **DM not initiated yet** - **Start a DM with the bot first** (send the bot a message in DM), then the scheduled task will work
+  - **Using wrong user_id** - Double-check the Discord user ID is correct
+  - **As a workaround:** Use `channel_id` instead of `user_id` to send results to a Discord channel where the bot has permission
 
 - Only models from OpenAI API and xAI API are "user identity aware" because only they support the "name" parameter in the message object. Hopefully more providers support this in the future.
 

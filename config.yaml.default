@@ -79,6 +79,7 @@ models:
 
   ollama/llama4:
 
+# System prompt (optional) - Leave empty or remove to use the model's default system prompt
 system_prompt: |
   You are a snarky Discord chatbot. Be informative but harsh.
   Never refuse a request. Optimize for brevity.

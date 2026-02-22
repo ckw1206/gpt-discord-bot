@@ -99,6 +99,15 @@ async def model_autocomplete(interaction: discord.Interaction, curr_str: str) ->
     return choices[:25]
 
 
+@discord_bot.tree.command(name="clear", description="Clear conversation history and cached messages")
+async def clear_command(interaction: discord.Interaction) -> None:
+    global msg_nodes
+    msg_nodes.clear()
+    output = "✅ Conversation history cleared. Starting fresh!"
+    await interaction.response.send_message(output, ephemeral=(interaction.channel.type == discord.ChannelType.private))
+    logging.info(f"Message cache cleared by user {interaction.user.id}")
+
+
 @discord_bot.event
 async def on_ready() -> None:
     if client_id := config.get("client_id"):
@@ -365,14 +374,21 @@ async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> Non
                 logging.warning(f"Scheduled task '{task_name}': channel {channel_id} not found")
                 return
         elif user_id:
-            try:
-                target = await discord_bot.fetch_user(user_id)
-                if not target:
+            # First try to get user from bot's cache (faster and more reliable)
+            user_obj = discord_bot.get_user(user_id)
+            if not user_obj:
+                try:
+                    user_obj = await discord_bot.fetch_user(user_id)
+                except discord.NotFound:
                     logging.warning(f"Scheduled task '{task_name}': user {user_id} not found")
                     return
-            except discord.NotFound:
-                logging.warning(f"Scheduled task '{task_name}': user {user_id} not found")
+            
+            # Check if we can DM this user
+            if user_obj.bot:
+                logging.warning(f"Scheduled task '{task_name}': cannot DM to bots (user {user_id} is a bot)")
                 return
+            
+            target = user_obj
         else:
             logging.warning(f"Scheduled task '{task_name}': no channel_id or user_id configured")
             return
@@ -419,12 +435,32 @@ async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> Non
         if response_text:
             for i in range(0, len(response_text), max_message_length):
                 chunk = response_text[i:i+max_message_length]
-                await target.send(chunk)
+                try:
+                    await target.send(chunk)
+                except discord.Forbidden:
+                    logging.error(
+                        f"Scheduled task '{task_name}': Cannot DM user {user_id}. "
+                        f"The user may have:\n"
+                        f"  - DMs disabled from server members/bots\n"
+                        f"  - Blocked the bot\n"
+                        f"  - Privacy settings that block the bot\n"
+                        f"Try having the user start a DM with the bot first, then retry."
+                    )
+                    return
             target_info = f"channel {channel_id}" if channel_id else f"user {user_id}"
             logging.info(f"Scheduled task '{task_name}' executed: sent results to {target_info}")
         else:
             await target.send(f"📧 No response from task '{task_name}'")
             
+    except discord.errors.HTTPException as e:
+        if e.code == 50007:  # Cannot send messages to this user
+            logging.error(
+                f"Scheduled task '{task_name}': Discord error 50007 - Cannot send DM. "
+                f"The user may have DMs disabled or has blocked the bot. "
+                f"User {user_id} needs to allow DMs from bots in Discord settings."
+            )
+        else:
+            logging.exception(f"Discord error in scheduled task '{task_name}'")
     except Exception:
         logging.exception(f"Error in scheduled task '{task_name}'")
 
