@@ -46,6 +46,7 @@ scheduler = AsyncIOScheduler()
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.dm_messages = True  # Allow sending DMs to users
 activity = discord.CustomActivity(name=(config.get("status_message") or "github.com/jakobdylanc/llmcord")[:128])
 discord_bot = commands.Bot(intents=intents, activity=activity, command_prefix=None)
 
@@ -351,16 +352,29 @@ async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> Non
             return
         
         channel_id = task_config.get("channel_id")
+        user_id = task_config.get("user_id")
         model_name = task_config.get("model", curr_model)
         prompt = task_config.get("prompt", "Check my emails")
         
-        if not channel_id:
-            logging.warning(f"Scheduled task '{task_name}': no channel_id configured")
-            return
+        target = None
         
-        channel = discord_bot.get_channel(channel_id)
-        if not channel:
-            logging.warning(f"Scheduled task '{task_name}': channel {channel_id} not found")
+        # Try to get target channel or user
+        if channel_id:
+            target = discord_bot.get_channel(channel_id)
+            if not target:
+                logging.warning(f"Scheduled task '{task_name}': channel {channel_id} not found")
+                return
+        elif user_id:
+            try:
+                target = await discord_bot.fetch_user(user_id)
+                if not target:
+                    logging.warning(f"Scheduled task '{task_name}': user {user_id} not found")
+                    return
+            except discord.NotFound:
+                logging.warning(f"Scheduled task '{task_name}': user {user_id} not found")
+                return
+        else:
+            logging.warning(f"Scheduled task '{task_name}': no channel_id or user_id configured")
             return
         
         # Setup LLM client
@@ -405,10 +419,11 @@ async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> Non
         if response_text:
             for i in range(0, len(response_text), max_message_length):
                 chunk = response_text[i:i+max_message_length]
-                await channel.send(chunk)
-            logging.info(f"Scheduled task '{task_name}' executed: sent results to channel {channel_id}")
+                await target.send(chunk)
+            target_info = f"channel {channel_id}" if channel_id else f"user {user_id}"
+            logging.info(f"Scheduled task '{task_name}' executed: sent results to {target_info}")
         else:
-            await channel.send(f"📧 No response from task '{task_name}'")
+            await target.send(f"📧 No response from task '{task_name}'")
             
     except Exception:
         logging.exception(f"Error in scheduled task '{task_name}'")
@@ -418,6 +433,7 @@ def parse_cron(cron_expr: str) -> dict[str, Any]:
     """Parse cron expression into APScheduler kwargs.
     Format: minute hour day month day_of_week
     Example: '0 9 * * *' = 9:00 AM every day
+    Example: '* * * * *' = Every minute
     """
     parts = cron_expr.split()
     if len(parts) != 5:
@@ -425,7 +441,9 @@ def parse_cron(cron_expr: str) -> dict[str, Any]:
     
     minute, hour, day, month, day_of_week = parts
     
-    kwargs = {}
+    # Always set second=0 to prevent running every second
+    kwargs = {"second": 0}
+    
     if minute != "*":
         kwargs["minute"] = minute
     if hour != "*":

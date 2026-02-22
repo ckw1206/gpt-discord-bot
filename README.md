@@ -12,6 +12,8 @@
 
 llmcord transforms Discord into a collaborative LLM frontend. It works with practically any LLM, remote or locally hosted.
 
+**Note:** This is a fork of [llmcord](https://github.com/jakobdylanc/llmcord) with added scheduler support for automatic recurring tasks.
+
 ## Features
 
 ### Reply-based chat system:
@@ -26,6 +28,16 @@ Additionally:
 - When DMing the bot, conversations continue automatically (no reply required). To start a fresh conversation, just @ the bot. You can still reply to continue from anywhere.
 - You can branch conversations into [threads](https://support.discord.com/hc/en-us/articles/4403205878423-Threads-FAQ). Just create a thread from any message and @ the bot inside to continue.
 - Back-to-back messages from the same user are automatically chained together. Just reply to the latest one and the bot will see all of them.
+
+---
+
+### Scheduled tasks:
+Configure periodic tasks to run on a schedule. Perfect for automated email checks, daily summaries, or any recurring LLM task.
+
+- Define multiple tasks with different schedules (cron format)
+- Send results to Discord channels or DMs
+- Customize prompts and models per task
+- Enable/disable tasks without removing configuration
 
 ---
 
@@ -93,6 +105,45 @@ Or run local models with:
 | **models** | Add the models you want to use in `<provider>/<model>: <parameters>` format (examples are included). When you run `/model` these models will show up as autocomplete suggestions.<br /><br />**Refer to each provider's documentation for supported parameters.**<br /><br />**The first model in your `models` list will be the default model at startup.**<br /><br />**Some vision models may need `:vision` added to the end of their name to enable image support.** |
 | **system_prompt** | Write anything you want to customize the bot's behavior!<br /><br />**Leave blank for no system prompt.**<br /><br />**You can use the `{date}` and `{time}` tags in your system prompt to insert the current date and time, based on your host computer's time zone.** |
 
+### Scheduled tasks (optional):
+
+| Setting | Description |
+| --- | --- |
+| **enabled** | Set to `true` to enable a scheduled task, `false` to disable. |
+| **cron** | Cron schedule expression in the format: `minute hour day month day_of_week`<br /><br />**Examples:**<br />- `"0 9 * * *"` - Every day at 9:00 AM<br />- `"0 9 * * 1-5"` - Mon-Fri at 9:00 AM<br />- `"0 */2 * * *"` - Every 2 hours<br />- `"30 6 * * 0"` - Sunday at 6:30 AM<br /><br />**See [crontab.guru](https://crontab.guru) for help building expressions.** |
+| **channel_id** | Discord channel ID where the task result will be sent. **Example:** `1470093690549567498`<br /><br />**Use either `channel_id` OR `user_id`, not both.** |
+| **user_id** | Discord user ID for sending direct messages. Use this to send DM results to a specific user. **Example:** `467935812554850309`<br /><br />**Use either `channel_id` OR `user_id`, not both.** |
+| **model** | The LLM model to use for this task. **Example:** `"open-webui/gmail-checker"`<br /><br />**Must match a model defined in the `models` section.** |
+| **prompt** | The message/prompt to send to the LLM for this task. **Example:** `"Summarize my recent emails"` |
+
+**Example configuration:**
+```yaml
+scheduled_tasks:
+  # Daily email check to a channel
+  email_check:
+    enabled: true
+    cron: "0 9 * * *"
+    channel_id: 1470093690549567498
+    model: "open-webui/gmail-checker"
+    prompt: "Summarize my recent emails"
+  
+  # Daily summary sent as a DM
+  daily_summary:
+    enabled: true
+    cron: "0 18 * * *"
+    user_id: 467935812554850309  # Sends as DM to this user
+    model: "open-webui/llama3.2:1b"
+    prompt: "Give me a daily summary of important items"
+  
+  # Weekday morning check
+  weekday_check:
+    enabled: false
+    cron: "0 8 * * 1-5"
+    channel_id: 1470093690549567498
+    model: "open-webui/gmail-checker"
+    prompt: "Check for urgent emails only"
+```
+
 3. Run the bot:
 
    **No Docker:**
@@ -110,9 +161,23 @@ Or run local models with:
 
 - If you're having issues, try my suggestions [here](https://github.com/jakobdylanc/llmcord/issues/19)
 
+- For scheduled DM tasks, make sure the bot has permission to send DMs. Users may need to accept DMs from Discord bots in their privacy settings.
+
 - Only models from OpenAI API and xAI API are "user identity aware" because only they support the "name" parameter in the message object. Hopefully more providers support this in the future.
 
+- This is a fork of [llmcord](https://github.com/jakobdylanc/llmcord) with scheduled task support. Check the original repo for more information.
+
 - PRs are welcome :)
+
+## Star History
+
+<a href="https://star-history.com/#jakobdylanc/llmcord&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=jakobdylanc/llmcord&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=jakobdylanc/llmcord&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=jakobdylanc/llmcord&type=Date" />
+  </picture>
+</a>
 
 ## Star History
 

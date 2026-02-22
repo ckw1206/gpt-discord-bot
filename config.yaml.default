@@ -91,27 +91,20 @@ scheduled_tasks:
   # Cron schedule format: minute hour day month day_of_week
   # Example: "0 9 * * *" = Every day at 9:00 AM
   # Example: "0 9 * * 1-5" = Mon-Fri at 9:00 AM
+  # For DMs: use "user_id" instead of "channel_id"
 
-  # Task 1: Email check
+  # Task 1: Email check to channel
   email_check:
     enabled: false
     cron: "0 9 * * *"  # Every day at 9:00 AM
-    channel_id: 1470093690549567498
+    channel_id: 1470406324331483259  # Send to channel
     model: "open-webui/gmail-checker"
     prompt: "Summarize my recent emails"
   
-  # Task 2: Another scheduled task (uncomment to enable)
-  # daily_summary:
-  #   enabled: false
-  #   cron: "0 18 * * *"  # Every day at 6:00 PM
-  #   channel_id: 1470093690549567498
-  #   model: "open-webui/gmail-checker"
-  #   prompt: "Give me a daily summary of important items"
-  
-  # Task 3: Weekday morning check
-  # weekday_check:
-  #   enabled: false
-  #   cron: "0 8 * * 1-5"  # Mon-Fri at 8:00 AM
-  #   channel_id: 1470093690549567498
-  #   model: "open-webui/gmail-checker"
-  #   prompt: "Check for urgent emails only"
+  # Task 2: Send DM to user
+  DM_MSG:
+    enabled: false
+    cron: "0 * * * *"  # Every hour
+    user_id: 467935812554850309  # Send DM to this user ID (don't use channel_id)
+    model: "open-webui/llama3.2:1b"
+    prompt: "how are you? this is a test msg."
