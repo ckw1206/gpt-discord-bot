@@ -64,7 +64,7 @@ Or run local models with:
 ### Clear conversation history with `/clear`:
 Use `/clear` to reset the conversation history and message cache. This is useful when:
 - The bot seems stuck with warning messages
-- You shared an image but then switched to a non-vision model (result: "⚠️ Can't see images" warning)
+- You shared an image but then switched to a non-vision model
 - You want to start a completely fresh conversation without context from previous messages
 
 ---
@@ -81,17 +81,16 @@ Use `/clear` to reset the conversation history and message cache. This is useful
 - Displays helpful warnings when appropriate (like "⚠️ Only using last 25 messages" when the customizable message limit is exceeded)
 - Caches message data in a size-managed (no memory leaks) and mutex-protected (no race conditions) global dictionary to maximize efficiency and minimize Discord API calls
 - Fully asynchronous
-- ~550 lines of code
 
 ## Instructions
 
 1. Clone the repo:
    ```bash
-   git clone https://github.com/jakobdylanc/llmcord
-   cd llmcord
+   git clone https://github.com/ckw1206/gpt-discord-bot
+   cd gpt-discord-bot
    ```
 
-2. Create a copy of "config-example.yaml" named "config.yaml" and set it up:
+2. Create a copy of "config.yaml.default" named "config.yaml" and set it up:
 
 ### Discord settings:
 
@@ -134,7 +133,7 @@ scheduled_tasks:
   email_check:
     enabled: true
     cron: "0 9 * * *"
-    channel_id: 1470093690549567498
+    channel_id: 12345678
     model: "open-webui/gmail-checker"
     prompt: "Summarize my recent emails"
   
@@ -142,17 +141,9 @@ scheduled_tasks:
   daily_summary:
     enabled: true
     cron: "0 18 * * *"
-    user_id: 467935812554850309  # Sends as DM to this user
+    user_id: 12345678  # Sends as DM to this user
     model: "open-webui/llama3.2:1b"
     prompt: "Give me a daily summary of important items"
-  
-  # Weekday morning check
-  weekday_check:
-    enabled: false
-    cron: "0 8 * * 1-5"
-    channel_id: 1470093690549567498
-    model: "open-webui/gmail-checker"
-    prompt: "Check for urgent emails only"
 ```
 
 3. Run the bot:
@@ -170,7 +161,7 @@ scheduled_tasks:
 
 ## Notes
 
-- If you're having issues, try my suggestions [here](https://github.com/jakobdylanc/llmcord/issues/19)
+- If you're having issues, try the suggestions [here](https://github.com/jakobdylanc/llmcord/issues/19)
 
 - **Thinking tags (`<think>` blocks):** If your model includes thinking/reasoning content (like Claude's extended thinking), the bot automatically strips these tags so users only see the final response. The thinking content is never displayed in Discord.
 
@@ -190,23 +181,3 @@ scheduled_tasks:
 - This is a fork of [llmcord](https://github.com/jakobdylanc/llmcord) with scheduled task support. Check the original repo for more information.
 
 - PRs are welcome :)
-
-## Star History
-
-<a href="https://star-history.com/#jakobdylanc/llmcord&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=jakobdylanc/llmcord&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=jakobdylanc/llmcord&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=jakobdylanc/llmcord&type=Date" />
-  </picture>
-</a>
-
-## Star History
-
-<a href="https://star-history.com/#jakobdylanc/llmcord&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=jakobdylanc/llmcord&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=jakobdylanc/llmcord&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=jakobdylanc/llmcord&type=Date" />
-  </picture>
-</a>
