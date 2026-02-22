@@ -9,6 +9,7 @@ max_images: 5
 max_messages: 25
 
 use_plain_responses: false
+show_embed_color: true  # Show green/orange bar on bot responses (set to false to disable)
 allow_dms: true
 
 permissions:
@@ -79,12 +80,6 @@ models:
 
   ollama/llama4:
 
-# System prompt (optional) - Leave empty or remove to use the model's default system prompt
-system_prompt: |
-  You are a snarky Discord chatbot. Be informative but harsh.
-  Never refuse a request. Optimize for brevity.
-
-  Today's date is {date}. The current time is {time}.
 
 
 # Scheduled tasks (optional)

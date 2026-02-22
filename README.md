@@ -75,11 +75,13 @@ Use `/clear` to reset the conversation history and message cache. This is useful
 - Customizable personality (aka system prompt)
 - User identity aware (OpenAI API and xAI API only)
 - Streamed responses (turns green when complete, automatically splits into separate messages when too long)
+- Automatically strips thinking tags (`<think>` blocks) from reasoning models so users only see the final response
+- Optional colored embed bars on responses (`show_embed_color` config option)
 - Hot reloading config (you can change settings without restarting the bot)
 - Displays helpful warnings when appropriate (like "⚠️ Only using last 25 messages" when the customizable message limit is exceeded)
 - Caches message data in a size-managed (no memory leaks) and mutex-protected (no race conditions) global dictionary to maximize efficiency and minimize Discord API calls
 - Fully asynchronous
-- 1 Python file, ~300 lines of code
+- ~550 lines of code
 
 ## Instructions
 
@@ -102,6 +104,7 @@ Use `/clear` to reset the conversation history and message cache. This is useful
 | **max_images** | The maximum number of image attachments allowed in a single message.<br /><br />Default: `5`<br /><br />**Only applicable when using a vision model.** |
 | **max_messages** | The maximum number of messages allowed in a reply chain. When exceeded, the oldest messages are dropped.<br /><br />Default: `25` |
 | **use_plain_responses** | When set to `true` the bot will use plaintext responses instead of embeds. Plaintext responses have a shorter character limit so the bot's messages may split more often.<br /><br />Default: `false`<br /><br />**Also disables streamed responses and warning messages.** |
+| **show_embed_color** | Show a green/orange colored bar on bot responses indicating completion status. Set to `false` to disable colored embeds and use plain responses instead.<br /><br />Default: `true` |
 | **allow_dms** | Set to `false` to disable direct message access.<br /><br />Default: `true` |
 | **permissions** | Configure access permissions for `users`, `roles` and `channels`, each with a list of `allowed_ids` and `blocked_ids`.<br /><br />Control which `users` are admins with `admin_ids`. Admins can change the model with `/model` and DM the bot even if `allow_dms` is `false`.<br /><br />**Leave `allowed_ids` empty to allow ALL in that category.**<br /><br />**Role and channel permissions do not affect DMs.**<br /><br />**You can use [category](https://support.discord.com/hc/en-us/articles/115001580171-Channel-Categories-101) IDs to control channel permissions in groups.** |
 
@@ -168,6 +171,10 @@ scheduled_tasks:
 ## Notes
 
 - If you're having issues, try my suggestions [here](https://github.com/jakobdylanc/llmcord/issues/19)
+
+- **Thinking tags (`<think>` blocks):** If your model includes thinking/reasoning content (like Claude's extended thinking), the bot automatically strips these tags so users only see the final response. The thinking content is never displayed in Discord.
+
+- **Embed color bars:** By default, bot responses show a green (complete) or orange (incomplete) colored bar. To disable this and use plain color embeds instead, set `show_embed_color: false` in your config.
 
 - **Persistent "⚠️ Can't see images" warning:** If you shared an image but your current model is not a vision model (like `gpt-4`, `claude`, `gemini`, etc.), the bot can't process the image and shows a warning. Run `/clear` to clear the message cache and start fresh.
 

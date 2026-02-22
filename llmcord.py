@@ -31,6 +31,14 @@ EDIT_DELAY_SECONDS = 1
 MAX_MESSAGE_NODES = 500
 
 
+def strip_thinking_tags(text: str) -> str:
+    """Remove <think> tags and their content from response text."""
+    import re
+    # Remove <think>...</think> blocks (handles multiline)
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    return text.strip()
+
+
 def get_config(filename: str = "config.yaml") -> dict[str, Any]:
     with open(filename, encoding="utf-8") as file:
         return yaml.safe_load(file)
@@ -114,6 +122,7 @@ async def on_ready() -> None:
         logging.info(f"\n\nBOT INVITE URL:\nhttps://discord.com/oauth2/authorize?client_id={client_id}&permissions=412317191168&scope=bot\n")
 
     await discord_bot.tree.sync()
+    logging.info(f"Synced {len(discord_bot.tree._get_all_commands())} slash commands")
     
     # Start scheduler for periodic tasks
     if not scheduler.running:
@@ -278,11 +287,14 @@ async def on_message(new_msg: discord.Message) -> None:
 
     openai_kwargs = dict(model=model, messages=messages[::-1], stream=True, extra_headers=extra_headers, extra_query=extra_query, extra_body=extra_body)
 
+    show_embed_color = config.get("show_embed_color", True)
     if use_plain_responses := config.get("use_plain_responses", False):
         max_message_length = 4000
     else:
         max_message_length = 4096 - len(STREAMING_INDICATOR)
         embed = discord.Embed.from_dict(dict(fields=[dict(name=warning, value="", inline=False) for warning in sorted(user_warnings)]))
+        if not show_embed_color:
+            embed.color = None
 
     async def reply_helper(**reply_kwargs) -> None:
         reply_target = new_msg if not response_msgs else response_msgs[-1]
@@ -325,8 +337,12 @@ async def on_message(new_msg: discord.Message) -> None:
                     is_good_finish = finish_reason != None and finish_reason.lower() in ("stop", "end_turn")
 
                     if start_next_msg or ready_to_edit or is_final_edit:
-                        embed.description = response_contents[-1] if is_final_edit else (response_contents[-1] + STREAMING_INDICATOR)
-                        embed.color = EMBED_COLOR_COMPLETE if msg_split_incoming or is_good_finish else EMBED_COLOR_INCOMPLETE
+                        # Strip thinking tags before displaying
+                        display_content = strip_thinking_tags(response_contents[-1]) if is_final_edit else (response_contents[-1] + STREAMING_INDICATOR)
+                        embed.description = display_content
+                        
+                        if show_embed_color:
+                            embed.color = EMBED_COLOR_COMPLETE if msg_split_incoming or is_good_finish else EMBED_COLOR_INCOMPLETE
 
                         if start_next_msg:
                             await reply_helper(embed=embed, silent=True)
@@ -338,13 +354,18 @@ async def on_message(new_msg: discord.Message) -> None:
 
             if use_plain_responses:
                 for content in response_contents:
-                    await reply_helper(view=LayoutView().add_item(TextDisplay(content=content)))
+                    # Strip thinking tags from plain responses
+                    clean_content = strip_thinking_tags(content)
+                    if clean_content:
+                        await reply_helper(view=LayoutView().add_item(TextDisplay(content=clean_content)))
 
     except Exception:
         logging.exception("Error while generating response")
 
     for response_msg in response_msgs:
-        msg_nodes[response_msg.id].text = "".join(response_contents)
+        # Strip thinking tags before caching
+        clean_text = strip_thinking_tags("".join(response_contents))
+        msg_nodes[response_msg.id].text = clean_text
         msg_nodes[response_msg.id].lock.release()
 
     # Delete oldest MsgNodes (lowest message IDs) from the cache
