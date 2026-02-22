@@ -9,5 +9,6 @@
 
 !Dockerfile
 !config-example.yaml
+!config.yaml.default
 !docker-compose.yaml
 !requirements.txt

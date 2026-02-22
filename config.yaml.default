@@ -84,3 +84,34 @@ system_prompt: |
   Never refuse a request. Optimize for brevity.
 
   Today's date is {date}. The current time is {time}.
+
+
+# Scheduled tasks (optional)
+scheduled_tasks:
+  # Cron schedule format: minute hour day month day_of_week
+  # Example: "0 9 * * *" = Every day at 9:00 AM
+  # Example: "0 9 * * 1-5" = Mon-Fri at 9:00 AM
+
+  # Task 1: Email check
+  email_check:
+    enabled: false
+    cron: "0 9 * * *"  # Every day at 9:00 AM
+    channel_id: 1470093690549567498
+    model: "open-webui/gmail-checker"
+    prompt: "Summarize my recent emails"
+  
+  # Task 2: Another scheduled task (uncomment to enable)
+  # daily_summary:
+  #   enabled: false
+  #   cron: "0 18 * * *"  # Every day at 6:00 PM
+  #   channel_id: 1470093690549567498
+  #   model: "open-webui/gmail-checker"
+  #   prompt: "Give me a daily summary of important items"
+  
+  # Task 3: Weekday morning check
+  # weekday_check:
+  #   enabled: false
+  #   cron: "0 8 * * 1-5"  # Mon-Fri at 8:00 AM
+  #   channel_id: 1470093690549567498
+  #   model: "open-webui/gmail-checker"
+  #   prompt: "Check for urgent emails only"

@@ -11,6 +11,7 @@ from discord.ext import commands
 from discord.ui import LayoutView, TextDisplay
 import httpx
 from openai import AsyncOpenAI
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import yaml
 
 logging.basicConfig(
@@ -40,6 +41,8 @@ curr_model = next(iter(config["models"]))
 
 msg_nodes = {}
 last_task_time = 0
+
+scheduler = AsyncIOScheduler()
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -101,6 +104,12 @@ async def on_ready() -> None:
         logging.info(f"\n\nBOT INVITE URL:\nhttps://discord.com/oauth2/authorize?client_id={client_id}&permissions=412317191168&scope=bot\n")
 
     await discord_bot.tree.sync()
+    
+    # Start scheduler for periodic tasks
+    if not scheduler.running:
+        scheduler.start()
+        setup_scheduled_tasks()
+        logging.info("Scheduler started")
 
 
 @discord_bot.event
@@ -333,6 +342,148 @@ async def on_message(new_msg: discord.Message) -> None:
         for msg_id in sorted(msg_nodes.keys())[: num_nodes - MAX_MESSAGE_NODES]:
             async with msg_nodes.setdefault(msg_id, MsgNode()).lock:
                 msg_nodes.pop(msg_id, None)
+
+
+async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> None:
+    """Run a scheduled task with given configuration."""
+    try:
+        if not task_config.get("enabled", False):
+            return
+        
+        channel_id = task_config.get("channel_id")
+        model_name = task_config.get("model", curr_model)
+        prompt = task_config.get("prompt", "Check my emails")
+        
+        if not channel_id:
+            logging.warning(f"Scheduled task '{task_name}': no channel_id configured")
+            return
+        
+        channel = discord_bot.get_channel(channel_id)
+        if not channel:
+            logging.warning(f"Scheduled task '{task_name}': channel {channel_id} not found")
+            return
+        
+        # Setup LLM client
+        provider, model = model_name.removesuffix(":vision").split("/", 1)
+        provider_config = config["providers"][provider]
+        
+        base_url = provider_config["base_url"]
+        api_key = provider_config.get("api_key", "sk-no-key-required")
+        openai_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+        
+        model_parameters = config["models"].get(model_name, None)
+        extra_headers = provider_config.get("extra_headers")
+        extra_query = provider_config.get("extra_query")
+        extra_body = (provider_config.get("extra_body") or {}) | (model_parameters or {}) or None
+        
+        # Get system prompt if configured
+        system_prompt_text = config.get("system_prompt", "")
+        if system_prompt_text:
+            now = datetime.now().astimezone()
+            system_prompt_text = system_prompt_text.replace("{date}", now.strftime("%B %d %Y")).replace("{time}", now.strftime("%H:%M:%S %Z%z")).strip()
+        
+        # Build messages
+        messages = [{"role": "user", "content": prompt}]
+        if system_prompt_text:
+            messages.append({"role": "system", "content": system_prompt_text})
+        
+        # Stream response
+        response_text = ""
+        async for chunk in await openai_client.chat.completions.create(
+            model=model,
+            messages=messages[::-1],
+            stream=True,
+            extra_headers=extra_headers,
+            extra_query=extra_query,
+            extra_body=extra_body
+        ):
+            if choice := chunk.choices[0] if chunk.choices else None:
+                response_text += choice.delta.content or ""
+        
+        # Send response in chunks if needed
+        max_message_length = 4096
+        if response_text:
+            for i in range(0, len(response_text), max_message_length):
+                chunk = response_text[i:i+max_message_length]
+                await channel.send(chunk)
+            logging.info(f"Scheduled task '{task_name}' executed: sent results to channel {channel_id}")
+        else:
+            await channel.send(f"📧 No response from task '{task_name}'")
+            
+    except Exception:
+        logging.exception(f"Error in scheduled task '{task_name}'")
+
+
+def parse_cron(cron_expr: str) -> dict[str, Any]:
+    """Parse cron expression into APScheduler kwargs.
+    Format: minute hour day month day_of_week
+    Example: '0 9 * * *' = 9:00 AM every day
+    """
+    parts = cron_expr.split()
+    if len(parts) != 5:
+        raise ValueError(f"Invalid cron format: {cron_expr}. Use: minute hour day month day_of_week")
+    
+    minute, hour, day, month, day_of_week = parts
+    
+    kwargs = {}
+    if minute != "*":
+        kwargs["minute"] = minute
+    if hour != "*":
+        kwargs["hour"] = hour
+    if day != "*":
+        kwargs["day"] = day
+    if month != "*":
+        kwargs["month"] = month
+    if day_of_week != "*":
+        kwargs["day_of_week"] = day_of_week
+    
+    return kwargs
+
+
+def setup_scheduled_tasks() -> None:
+    """Setup scheduled tasks based on config."""
+    scheduled_tasks = config.get("scheduled_tasks", {})
+    
+    # Handle both dict and legacy flat config format
+    if isinstance(scheduled_tasks, dict) and "enabled" in scheduled_tasks and "cron" in scheduled_tasks:
+        # Legacy format: single task stored at top level
+        if scheduled_tasks.get("enabled", False):
+            cron_expr = scheduled_tasks.get("cron", "0 9 * * *")
+            try:
+                scheduler.add_job(
+                    run_scheduled_task,
+                    "cron",
+                    id="email_check",
+                    replace_existing=True,
+                    args=["email_check", scheduled_tasks],
+                    **parse_cron(cron_expr)
+                )
+                logging.info(f"Scheduled task setup with cron: {cron_expr}")
+            except Exception as e:
+                logging.error(f"Failed to setup scheduled task: {e}")
+    else:
+        # New format: multiple tasks
+        for task_name, task_config in scheduled_tasks.items():
+            if not isinstance(task_config, dict):
+                continue
+                
+            if not task_config.get("enabled", False):
+                logging.debug(f"Scheduled task '{task_name}' is disabled")
+                continue
+            
+            cron_expr = task_config.get("cron", "0 9 * * *")
+            try:
+                scheduler.add_job(
+                    run_scheduled_task,
+                    "cron",
+                    id=f"scheduled_task_{task_name}",
+                    replace_existing=True,
+                    args=[task_name, task_config],
+                    **parse_cron(cron_expr)
+                )
+                logging.info(f"Scheduled task '{task_name}' setup with cron: {cron_expr}")
+            except Exception as e:
+                logging.error(f"Failed to setup scheduled task '{task_name}': {e}")
 
 
 async def main() -> None:
