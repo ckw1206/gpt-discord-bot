@@ -84,6 +84,10 @@ models:
 
   ollama/llama4:
 
+fallback_models:  # Optional: List of models to try if main model fails (in order). Leave empty to disable.
+  # - "ollama/llama2"
+  # - "groq/mixtral"
+
 
 
 # Scheduled tasks (optional)
@@ -99,6 +103,8 @@ scheduled_tasks:
     cron: "0 9 * * *"  # Every day at 9:00 AM
     channel_id: 1470406324331483259  # Send to channel
     model: "open-webui/gmail-checker"
+    fallback_models:  # Optional: Task-specific fallback models, or omit to use global fallback_models
+      - "ollama/llama2"
     prompt: "Summarize my recent emails"
   
   # Task 2: Send DM to user
@@ -107,4 +113,6 @@ scheduled_tasks:
     cron: "0 * * * *"  # Every hour
     user_id: 467935812554850309  # Send DM to this user ID (don't use channel_id)
     model: "open-webui/llama3.2:1b"
+    fallback_models:  # Optional: Task-specific fallback models
+      - "ollama/llama2"
     prompt: "how are you? this is a test msg."

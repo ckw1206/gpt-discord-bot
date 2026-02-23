@@ -369,6 +369,9 @@ async def on_message(new_msg: discord.Message) -> None:
         msg_nodes[response_msg.id] = MsgNode(parent_msg=new_msg)
         await msg_nodes[response_msg.id].lock.acquire()
 
+    model_used = provider_slash_model
+    fallback_attempted = False
+    
     try:
         async with new_msg.channel.typing():
             async for chunk in await openai_client.chat.completions.create(**openai_kwargs):
@@ -425,10 +428,110 @@ async def on_message(new_msg: discord.Message) -> None:
                         await reply_helper(view=LayoutView().add_item(TextDisplay(content=clean_content)))
 
     except Exception as e:
-        logging.exception("Error while generating response")
-        # Notify admins of the error
-        channel_info = f"in #{new_msg.channel.name}" if hasattr(new_msg.channel, 'name') else "in DM"
-        await notify_admin_error(e, f"Failed to generate response {channel_info}")
+        # Try fallback models if configured
+        fallback_models = config.get("fallback_models", []) or []
+        if fallback_models and not fallback_attempted:
+            for fallback_idx, fallback_model in enumerate(fallback_models):
+                if not fallback_model or not fallback_model.strip():
+                    continue
+                    
+                fallback_attempted = True
+                logging.warning(f"Primary model '{provider_slash_model}' failed: {parse_error_message(e)}. Attempting fallback [{fallback_idx + 1}/{len(fallback_models)}]: {fallback_model}")
+                
+                try:
+                    # Setup fallback client
+                    fallback_provider, fallback_model_name = fallback_model.removesuffix(":vision").split("/", 1)
+                    fallback_provider_config = config["providers"][fallback_provider]
+                    fallback_openai_client = AsyncOpenAI(
+                        base_url=fallback_provider_config["base_url"],
+                        api_key=fallback_provider_config.get("api_key", "sk-no-key-required")
+                    )
+                    
+                    fallback_model_params = config["models"].get(fallback_model, None)
+                    fallback_extra_headers = fallback_provider_config.get("extra_headers")
+                    fallback_extra_query = fallback_provider_config.get("extra_query")
+                    fallback_extra_body = (fallback_provider_config.get("extra_body") or {}) | (fallback_model_params or {}) or None
+                    
+                    # Reset for fallback attempt
+                    curr_content = finish_reason = None
+                    response_contents = []
+                    
+                    fallback_kwargs = dict(
+                        model=fallback_model_name,
+                        messages=messages[::-1],
+                        stream=True,
+                        extra_headers=fallback_extra_headers,
+                        extra_query=fallback_extra_query,
+                        extra_body=fallback_extra_body
+                    )
+                    
+                    async with new_msg.channel.typing():
+                        async for chunk in await fallback_openai_client.chat.completions.create(**fallback_kwargs):
+                            if finish_reason != None:
+                                break
+
+                            if not (choice := chunk.choices[0] if chunk.choices else None):
+                                continue
+
+                            finish_reason = choice.finish_reason
+                            prev_content = curr_content or ""
+                            curr_content = choice.delta.content or ""
+                            new_content = prev_content if finish_reason == None else (prev_content + curr_content)
+
+                            if response_contents == [] and new_content == "":
+                                continue
+
+                            if start_next_msg := response_contents == [] or len(response_contents[-1] + new_content) > max_message_length:
+                                response_contents.append("")
+
+                            response_contents[-1] += new_content
+
+                            if not use_plain_responses:
+                                time_delta = datetime.now().timestamp() - last_task_time
+                                ready_to_edit = time_delta >= EDIT_DELAY_SECONDS
+                                msg_split_incoming = finish_reason == None and len(response_contents[-1] + curr_content) > max_message_length
+                                is_final_edit = finish_reason != None or msg_split_incoming
+                                is_good_finish = finish_reason != None and finish_reason.lower() in ("stop", "end_turn")
+
+                                if start_next_msg or ready_to_edit or is_final_edit:
+                                    display_content = strip_thinking_tags(response_contents[-1]) if is_final_edit else (response_contents[-1] + STREAMING_INDICATOR)
+                                    embed.description = display_content
+                                    
+                                    if show_embed_color:
+                                        embed.color = EMBED_COLOR_COMPLETE if msg_split_incoming or is_good_finish else EMBED_COLOR_INCOMPLETE
+
+                                    if start_next_msg:
+                                        await reply_helper(embed=embed, silent=True)
+                                    else:
+                                        await asyncio.sleep(EDIT_DELAY_SECONDS - time_delta)
+                                        await response_msgs[-1].edit(embed=embed)
+
+                                    last_task_time = datetime.now().timestamp()
+
+                        if use_plain_responses:
+                            for content in response_contents:
+                                clean_content = strip_thinking_tags(content)
+                                if clean_content:
+                                    await reply_helper(view=LayoutView().add_item(TextDisplay(content=clean_content)))
+                    
+                    model_used = fallback_model
+                    logging.info(f"Fallback model '{fallback_model}' succeeded")
+                    break  # Success - exit fallback loop
+                    
+                except Exception as fallback_error:
+                    # This fallback failed, try next one
+                    logging.warning(f"Fallback model '{fallback_model}' failed: {parse_error_message(fallback_error)}")
+                    if fallback_idx == len(fallback_models) - 1:
+                        # Last fallback also failed
+                        logging.exception("Error while generating response (all fallback models failed)")
+                        channel_info = f"in #{new_msg.channel.name}" if hasattr(new_msg.channel, 'name') else "in DM"
+                        await notify_admin_error(fallback_error, f"Failed to generate response {channel_info} (all models failed)")
+                    continue
+        else:
+            # No fallback available or already tried fallback
+            logging.exception("Error while generating response")
+            channel_info = f"in #{new_msg.channel.name}" if hasattr(new_msg.channel, 'name') else "in DM"
+            await notify_admin_error(e, f"Failed to generate response {channel_info}")
 
     for response_msg in response_msgs:
         # Strip thinking tags before caching
@@ -506,18 +609,88 @@ async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> Non
         if system_prompt_text:
             messages.append({"role": "system", "content": system_prompt_text})
         
+        
         # Stream response
         response_text = ""
-        async for chunk in await openai_client.chat.completions.create(
-            model=model,
-            messages=messages[::-1],
-            stream=True,
-            extra_headers=extra_headers,
-            extra_query=extra_query,
-            extra_body=extra_body
-        ):
-            if choice := chunk.choices[0] if chunk.choices else None:
-                response_text += choice.delta.content or ""
+        models_to_try = [(model, openai_client, model_name)]
+        
+        # Add fallback models if configured (task-specific or global)
+        fallback_models = task_config.get("fallback_models") or config.get("fallback_models", []) or []
+        
+        # Build list of all models to try
+        for fallback_model in fallback_models:
+            if not fallback_model or not str(fallback_model).strip():
+                continue
+            try:
+                fallback_provider, fallback_model_name = fallback_model.removesuffix(":vision").split("/", 1)
+                fallback_provider_config = config["providers"][fallback_provider]
+                fallback_openai_client = AsyncOpenAI(
+                    base_url=fallback_provider_config["base_url"],
+                    api_key=fallback_provider_config.get("api_key", "sk-no-key-required")
+                )
+                fallback_model_params = config["models"].get(fallback_model, None)
+                fallback_extra_headers = fallback_provider_config.get("extra_headers")
+                fallback_extra_query = fallback_provider_config.get("extra_query")
+                fallback_extra_body = (fallback_provider_config.get("extra_body") or {}) | (fallback_model_params or {}) or None
+                
+                models_to_try.append((fallback_model_name, fallback_openai_client, fallback_model, fallback_extra_headers, fallback_extra_query, fallback_extra_body))
+            except Exception as setup_error:
+                logging.warning(f"Scheduled task '{task_name}': Failed to setup fallback model '{fallback_model}': {setup_error}")
+        
+        last_error = None
+        for attempt_idx, model_info in enumerate(models_to_try):
+            try:
+                response_text = ""
+                if attempt_idx == 0:
+                    # Primary model
+                    attempt_model = model
+                    attempt_client = openai_client
+                    attempt_model_name = model_name
+                    attempt_extra_headers = extra_headers
+                    attempt_extra_query = extra_query
+                    attempt_extra_body = extra_body
+                else:
+                    # Fallback model
+                    attempt_model, attempt_client, attempt_model_name, attempt_extra_headers, attempt_extra_query, attempt_extra_body = model_info
+                
+                async for chunk in await attempt_client.chat.completions.create(
+                    model=attempt_model,
+                    messages=messages[::-1],
+                    stream=True,
+                    extra_headers=attempt_extra_headers,
+                    extra_query=attempt_extra_query,
+                    extra_body=attempt_extra_body
+                ):
+                    if choice := chunk.choices[0] if chunk.choices else None:
+                        response_text += choice.delta.content or ""
+                
+                # Success - break out of retry loop
+                if attempt_idx > 0:
+                    logging.info(f"Scheduled task '{task_name}': Fallback model [{attempt_idx}/{len(models_to_try)-1}] '{attempt_model_name}' succeeded")
+                break
+                
+            except Exception as e:
+                last_error = e
+                if attempt_idx == 0:
+                    # Primary model failed
+                    logging.warning(f"Scheduled task '{task_name}': Primary model failed: {parse_error_message(e)}")
+                    if len(models_to_try) > 1:
+                        logging.info(f"Scheduled task '{task_name}': Attempting {len(models_to_try) - 1} fallback model(s)")
+                    else:
+                        # No fallback
+                        raise
+                else:
+                    # Fallback failed
+                    fallback_num = attempt_idx
+                    total_fallbacks = len(models_to_try) - 1
+                    logging.warning(f"Scheduled task '{task_name}': Fallback model [{fallback_num}/{total_fallbacks}] failed: {parse_error_message(e)}")
+                    if attempt_idx < len(models_to_try) - 1:
+                        # More fallbacks to try
+                        continue
+                    else:
+                        # Last model failed
+                        logging.error(f"Scheduled task '{task_name}': All models exhausted")
+                        raise
         
         # Send response in chunks if needed
         max_message_length = 4096
@@ -550,10 +723,12 @@ async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> Non
             )
         else:
             logging.exception(f"Discord error in scheduled task '{task_name}'")
+            # Notify admin about Discord errors even if fallback was successful
             await notify_admin_error(e, f"Scheduled task '{task_name}' - Discord error")
     except Exception as e:
         logging.exception(f"Error in scheduled task '{task_name}'")
-        await notify_admin_error(e, f"Scheduled task '{task_name}' failed")
+        # Only notify if all models failed
+        await notify_admin_error(e, f"Scheduled task '{task_name}' failed (all {len(models_to_try)} model(s) failed)")
 
 
 def parse_cron(cron_expr: str) -> dict[str, Any]:

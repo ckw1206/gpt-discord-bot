@@ -113,6 +113,7 @@ Use `/clear` to reset the conversation history and message cache. This is useful
 | --- | --- |
 | **providers** | Add the LLM providers you want to use, each with a `base_url` and optional `api_key` entry. Popular providers (`openai`, `openrouter`, `ollama`, etc.) are already included.<br /><br />**Only supports OpenAI compatible APIs.**<br /><br />**Some providers may need `extra_headers` / `extra_query` / `extra_body` entries for extra HTTP data. See the included `azure-openai` provider for an example.** |
 | **models** | Add the models you want to use in `<provider>/<model>: <parameters>` format (examples are included). When you run `/model` these models will show up as autocomplete suggestions.<br /><br />**Refer to each provider's documentation for supported parameters.**<br /><br />**The first model in your `models` list will be the default model at startup.**<br /><br />**Some vision models may need `:vision` added to the end of their name to enable image support.** |
+| **fallback_models** | *(Optional)* A list of models to automatically try if the primary model fails (e.g., rate limiting, API errors). The bot will try each fallback in order until one succeeds. If all models fail, the admin will be notified.<br /><br />**Format:** List of model names (matching the `models` section).<br /><br />**Example:**<br />```yaml<br />fallback_models:<br />  - "groq/mixtral-8x7b-32768"<br />  - "ollama/llama2"<br />```<br /><br />**Benefits:**<br />- Automatic failover when main model is rate-limited or unavailable<br />- No admin notifications if fallback succeeds<br />- Perfect for free-tier APIs with rate limits |
 | **system_prompt** | *(Optional)* Customize the bot's behavior with a custom system prompt. Leave empty, blank, or remove entirely to use the model's default system prompt.<br /><br />**You can use the `{date}` and `{time}` tags in your system prompt to insert the current date and time, based on your host computer's time zone.**<br /><br />**Example:** `system_prompt: "You are a helpful assistant"` |
 
 ### Scheduled tasks (optional):
@@ -124,20 +125,27 @@ Use `/clear` to reset the conversation history and message cache. This is useful
 | **channel_id** | Discord channel ID where the task result will be sent. **Example:** `1470093690549567498`<br /><br />**Use either `channel_id` OR `user_id`, not both.** |
 | **user_id** | Discord user ID for sending direct messages. Use this to send DM results to a specific user. **Example:** `467935812554850309`<br /><br />**Use either `channel_id` OR `user_id`, not both.** |
 | **model** | The LLM model to use for this task. **Example:** `"open-webui/gmail-checker"`<br /><br />**Must match a model defined in the `models` section.** |
+| **fallback_models** | *(Optional)* List of fallback models for this specific task. If not set, uses the global `fallback_models`. If set to an empty list, disables fallback for this task.<br /><br />**Example:** `fallback_models: ["groq/mixtral", "ollama/llama2"]` |
 | **prompt** | The message/prompt to send to the LLM for this task. **Example:** `"Summarize my recent emails"` |
 
 **Example configuration:**
 ```yaml
+fallback_models:  # Global fallback - applies to all messages and tasks without task-specific fallback
+  - "groq/mixtral-8x7b-32768"
+  - "ollama/llama2"
+
 scheduled_tasks:
-  # Daily email check to a channel
+  # Daily email check to a channel with custom fallback
   email_check:
     enabled: true
     cron: "0 9 * * *"
     channel_id: 12345678
     model: "open-webui/gmail-checker"
+    fallback_models:  # Optional: Use different fallback for this specific task
+      - "groq/mixtral"
     prompt: "Summarize my recent emails"
   
-  # Daily summary sent as a DM
+  # Daily summary sent as a DM (uses global fallback_models)
   daily_summary:
     enabled: true
     cron: "0 18 * * *"
@@ -160,6 +168,8 @@ scheduled_tasks:
    ```
 
 ## Notes
+
+- **Fallback models:** The bot now supports automatic failover with `fallback_models`. If your primary model is rate-limited or unavailable, the bot will try each fallback model in order. No admin notification is sent if a fallback succeeds.<br /><br />**Global example:**<br />```yaml<br />fallback_models:<br/>  - "groq/mixtral"<br />  - "ollama/llama2"<br />```<br /><br />For Discord messages, the response will still stream in real-time using whichever model succeeds. For scheduled tasks, the result will be sent normally.
 
 - If you're having issues, try the suggestions [here](https://github.com/jakobdylanc/llmcord/issues/19)
 
