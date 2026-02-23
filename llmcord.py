@@ -44,6 +44,71 @@ def get_config(filename: str = "config.yaml") -> dict[str, Any]:
         return yaml.safe_load(file)
 
 
+def parse_error_message(error: Exception) -> str:
+    """Extract human-readable error message from exception."""
+    error_str = str(error)
+    error_type = type(error).__name__
+    
+    # Rate limit errors
+    if "429" in error_str or error_type == "RateLimitError":
+        # Try to extract the provider's message
+        if "is temporarily rate-limited" in error_str:
+            match = error_str.split("'raw': '")[1].split("'")[0] if "'raw': '" in error_str else None
+            if match:
+                return f"⚠️ Rate Limited: {match}"
+        return "⚠️ Rate Limited: API provider is temporarily rate-limited. Please retry shortly."
+    
+    # Authentication errors
+    if "401" in error_str or "Unauthorized" in error_str:
+        return "❌ Authentication Error: Invalid API key or credentials."
+    
+    # Not found errors
+    if "404" in error_str or error_type == "NotFound":
+        return "❌ Not Found: The requested resource was not found."
+    
+    # Forbidden errors
+    if "403" in error_str or error_type == "Forbidden":
+        return "❌ Forbidden: You don't have permission to access this resource."
+    
+    # Connection errors
+    if "Connection" in error_type or "ECONNREFUSED" in error_str or "ETIMEDOUT" in error_str:
+        return "❌ Connection Error: Unable to connect to the API provider. Check your internet or provider status."
+    
+    # Generic fallback - just use error type and first line of message
+    first_line = error_str.split('\n')[0][:100]
+    return f"❌ {error_type}: {first_line}"
+
+
+async def notify_admin_error(error: Exception, context: str = "") -> None:
+    """Send error notification to all admins via DM."""
+    try:
+        admin_ids = config.get("permissions", {}).get("users", {}).get("admin_ids", [])
+        if not admin_ids:
+            return
+        
+        error_msg = parse_error_message(error)
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        dm_content = f"🤖 **Bot Error Notification**\n"
+        dm_content += f"⏰ Time: {timestamp}\n"
+        dm_content += f"📝 Context: {context}\n\n"
+        dm_content += f"Error: {error_msg}"
+        
+        for admin_id in admin_ids:
+            try:
+                admin_user = discord_bot.get_user(admin_id)
+                if not admin_user:
+                    admin_user = await discord_bot.fetch_user(admin_id)
+                
+                await admin_user.send(dm_content)
+            except (discord.NotFound, discord.Forbidden):
+                logging.warning(f"Could not send error notification to admin {admin_id}")
+            except Exception as e:
+                logging.warning(f"Failed to notify admin {admin_id}: {e}")
+    except Exception as e:
+        logging.warning(f"Failed to notify admins of error: {e}")
+
+
 config = get_config()
 curr_model = next(iter(config["models"]))
 
@@ -359,8 +424,11 @@ async def on_message(new_msg: discord.Message) -> None:
                     if clean_content:
                         await reply_helper(view=LayoutView().add_item(TextDisplay(content=clean_content)))
 
-    except Exception:
+    except Exception as e:
         logging.exception("Error while generating response")
+        # Notify admins of the error
+        channel_info = f"in #{new_msg.channel.name}" if hasattr(new_msg.channel, 'name') else "in DM"
+        await notify_admin_error(e, f"Failed to generate response {channel_info}")
 
     for response_msg in response_msgs:
         # Strip thinking tags before caching
@@ -482,8 +550,10 @@ async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> Non
             )
         else:
             logging.exception(f"Discord error in scheduled task '{task_name}'")
-    except Exception:
+            await notify_admin_error(e, f"Scheduled task '{task_name}' - Discord error")
+    except Exception as e:
         logging.exception(f"Error in scheduled task '{task_name}'")
+        await notify_admin_error(e, f"Scheduled task '{task_name}' failed")
 
 
 def parse_cron(cron_expr: str) -> dict[str, Any]:
