@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import logging
 from typing import Any, Literal, Optional
+import os
 
 import discord
 from discord.app_commands import Choice
@@ -13,6 +14,13 @@ from openai import AsyncOpenAI
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import yaml
 import json
+
+# Enable httpx logging if DEBUG env var is set
+if os.environ.get("DEBUG"):
+    logging.basicConfig(level=logging.DEBUG)
+    # Enable httpx debug logging
+    httpx_logger = logging.getLogger("httpx")
+    httpx_logger.setLevel(logging.DEBUG)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,7 +53,13 @@ def strip_thinking_tags(text: str) -> str:
 
 def get_config(filename: str = "config.yaml") -> dict[str, Any]:
     with open(filename, encoding="utf-8") as file:
-        return yaml.safe_load(file)
+        config_data = yaml.safe_load(file)
+    
+    # Log the actual loaded config for debugging
+    if logging.getLogger().level <= logging.DEBUG:
+        logging.debug(f"Raw config loaded - Models section: {config_data.get('models', {})}")
+    
+    return config_data
 
 
 def parse_error_message(error: Exception) -> str:
@@ -115,6 +129,16 @@ async def notify_admin_error(error: Exception, context: str = "") -> None:
 
 config = get_config()
 curr_model = next(iter(config["models"]))
+
+logging.info(f"🚀 Bot starting with config loaded")
+logging.info(f"📋 Available models in config: {list(config.get('models', {}).keys())}")
+logging.info(f"📋 Default curr_model set to: {curr_model}")
+logging.info(f"📋 All providers in config: {list(config.get('providers', {}).keys())}")
+
+# Log provider configs
+for provider_name, provider_config in config.get("providers", {}).items():
+    web_search_status = "✓ ENABLED" if provider_config.get("enable_web_search", provider_name == "open-webui") else "✗ DISABLED"
+    logging.info(f"  Provider '{provider_name}': web_search {web_search_status}")
 
 # Log web search configuration at startup
 for provider_name, provider_config in config.get("providers", {}).items():
@@ -246,6 +270,9 @@ async def on_message(new_msg: discord.Message) -> None:
     provider_slash_model = curr_model
     provider, model = provider_slash_model.removesuffix(":vision").split("/", 1)
 
+    logging.info(f"━━━ Discord Message Handler ━━━")
+    logging.info(f"Using model: {provider_slash_model}")
+    
     provider_config = config["providers"][provider]
 
     base_url = provider_config["base_url"]
@@ -253,6 +280,9 @@ async def on_message(new_msg: discord.Message) -> None:
     openai_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
 
     model_parameters = config["models"].get(provider_slash_model, None)
+    
+    logging.info(f"Model '{provider_slash_model}' exists in config.models: {provider_slash_model in config.get('models', {})}")
+    logging.info(f"Model parameters from config: {model_parameters}")
 
     extra_headers = provider_config.get("extra_headers")
     extra_query = provider_config.get("extra_query")
@@ -420,7 +450,14 @@ async def on_message(new_msg: discord.Message) -> None:
         logging.info(f"  - messages count: {len(openai_kwargs['messages'])}")
         async with new_msg.channel.typing():
             response_started = False
-            async for chunk in await openai_client.chat.completions.create(**openai_kwargs):
+            async for chunk in await openai_client.chat.completions.create(
+                model=openai_kwargs['model'],
+                messages=openai_kwargs['messages'],
+                stream=openai_kwargs['stream'],
+                extra_headers=openai_kwargs['extra_headers'],
+                extra_query=openai_kwargs['extra_query'],
+                extra_body=openai_kwargs['extra_body']
+            ):
                 if not response_started:
                     logging.info(f"✓ Got response from API. First chunk received. Usage info available: {hasattr(chunk, 'usage')}")
                     response_started = True
@@ -651,11 +688,18 @@ async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> Non
         provider, model = model_name.removesuffix(":vision").split("/", 1)
         provider_config = config["providers"][provider]
         
+        logging.info(f"━━━ Scheduled Task '{task_name}' ━━━")
+        logging.info(f"Using model: {model_name}")
+        
         base_url = provider_config["base_url"]
         api_key = provider_config.get("api_key", "sk-no-key-required")
         openai_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
         
         model_parameters = config["models"].get(model_name, None)
+        
+        logging.info(f"Model '{model_name}' exists in config.models: {model_name in config.get('models', {})}")
+        logging.info(f"Model parameters from config: {model_parameters}")
+        
         extra_headers = provider_config.get("extra_headers")
         extra_query = provider_config.get("extra_query")
         extra_body = (provider_config.get("extra_body") or {}) | (model_parameters or {}) or None
