@@ -8,7 +8,6 @@ from typing import Any, Literal, Optional
 import discord
 from discord.app_commands import Choice
 from discord.ext import commands
-from discord.ui import LayoutView, TextDisplay
 import httpx
 from openai import AsyncOpenAI
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -425,7 +424,7 @@ async def on_message(new_msg: discord.Message) -> None:
                     # Strip thinking tags from plain responses
                     clean_content = strip_thinking_tags(content)
                     if clean_content:
-                        await reply_helper(view=LayoutView().add_item(TextDisplay(content=clean_content)))
+                        await reply_helper(content=clean_content)
 
     except Exception as e:
         # Try fallback models if configured
@@ -512,7 +511,7 @@ async def on_message(new_msg: discord.Message) -> None:
                             for content in response_contents:
                                 clean_content = strip_thinking_tags(content)
                                 if clean_content:
-                                    await reply_helper(view=LayoutView().add_item(TextDisplay(content=clean_content)))
+                                    await reply_helper(content=clean_content)
                     
                     model_used = fallback_model
                     logging.info(f"Fallback model '{fallback_model}' succeeded")
