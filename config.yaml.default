@@ -74,6 +74,13 @@ providers:
   open-webui:
     base_url: http://localhost:3000/api
     api_key: 
+    enable_web_search: true  # Optional: Enable web search for Open WebUI (default is true for open-webui provider)
+    # IMPORTANT: This setting sends web_search=true to the Open WebUI API.
+    # For web search to actually work, you MUST:
+    # 1. Enable web search in Open WebUI Admin Settings > Web Search
+    # 2. Configure a search engine (SearXNG, Tavily, Brave, Google PSE, etc)
+    # 3. Set the required API keys for your chosen search engine
+    # If web search is enabled here but not in Open WebUI, the API parameter will be ignored
 
 models:
   openai/gpt-5:

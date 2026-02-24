@@ -12,11 +12,16 @@ import httpx
 from openai import AsyncOpenAI
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import yaml
+import json
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s: %(message)s",
 )
+
+# Create a separate logger for web search debugging
+web_search_logger = logging.getLogger("web_search")
+web_search_logger.setLevel(logging.DEBUG)
 
 VISION_MODEL_TAGS = ("claude", "gemini", "gemma", "gpt-4", "gpt-5", "grok-4", "llama", "llava", "mistral", "o3", "o4", "vision", "vl")
 PROVIDERS_SUPPORTING_USERNAMES = ("openai", "x-ai")
@@ -110,6 +115,14 @@ async def notify_admin_error(error: Exception, context: str = "") -> None:
 
 config = get_config()
 curr_model = next(iter(config["models"]))
+
+# Log web search configuration at startup
+for provider_name, provider_config in config.get("providers", {}).items():
+    web_search_enabled = provider_config.get("enable_web_search", provider_name == "open-webui")
+    if web_search_enabled:
+        logging.info(f"✓ Web Search enabled for provider: {provider_name}")
+    else:
+        logging.debug(f"✗ Web Search disabled for provider: {provider_name}")
 
 msg_nodes = {}
 last_task_time = 0
@@ -243,7 +256,24 @@ async def on_message(new_msg: discord.Message) -> None:
 
     extra_headers = provider_config.get("extra_headers")
     extra_query = provider_config.get("extra_query")
+    logging.debug(f"Provider '{provider}' extra_body config: {provider_config.get('extra_body')}")
+    logging.debug(f"Model '{provider_slash_model}' parameters: {model_parameters}")
     extra_body = (provider_config.get("extra_body") or {}) | (model_parameters or {}) or None
+    logging.debug(f"Merged extra_body: {extra_body}")
+    
+    logging.debug(f"Initial extra_body (before web_search): {extra_body}")
+    
+    # Add web_search support for Open WebUI and other providers that support it
+    web_search_enabled = provider_config.get("enable_web_search", provider == "open-webui")
+    if web_search_enabled:
+        if extra_body is None:
+            extra_body = {}
+        extra_body = dict(extra_body)  # Make a copy to avoid modifying original
+        extra_body["web_search"] = True
+        logging.info(f"Web search ENABLED for {provider}/{model}")
+        logging.info(f"extra_body after adding web_search: {extra_body}")
+    else:
+        logging.debug(f"Web search disabled for {provider}/{model}")
 
     accept_images = any(x in provider_slash_model.lower() for x in VISION_MODEL_TAGS)
     accept_usernames = any(provider_slash_model.lower().startswith(x) for x in PROVIDERS_SUPPORTING_USERNAMES)
@@ -334,6 +364,7 @@ async def on_message(new_msg: discord.Message) -> None:
             curr_msg = curr_node.parent_msg
 
     logging.info(f"Message received (user ID: {new_msg.author.id}, attachments: {len(new_msg.attachments)}, conversation length: {len(messages)}):\n{new_msg.content}")
+    logging.debug(f"Provider: {provider}, Model: {model}, Web Search Enabled: {provider_config.get('enable_web_search', provider == 'open-webui')}")
 
     if system_prompt := config.get("system_prompt"):
         now = datetime.now().astimezone()
@@ -350,6 +381,13 @@ async def on_message(new_msg: discord.Message) -> None:
     response_contents = []
 
     openai_kwargs = dict(model=model, messages=messages[::-1], stream=True, extra_headers=extra_headers, extra_query=extra_query, extra_body=extra_body)
+
+    logging.info(f"📤 OpenAI API kwargs: model={openai_kwargs['model']}, stream={openai_kwargs['stream']}")
+    logging.info(f"📤 extra_body content: {openai_kwargs['extra_body']}")
+    if openai_kwargs['extra_body'] and 'web_search' in openai_kwargs['extra_body']:
+        logging.info(f"✓✓✓ web_search field confirmed in openai_kwargs: {openai_kwargs['extra_body']['web_search']}")
+    else:
+        logging.warning(f"❌ web_search NOT in openai_kwargs! extra_body: {openai_kwargs['extra_body']}")
 
     show_embed_color = config.get("show_embed_color", True)
     if use_plain_responses := config.get("use_plain_responses", False):
@@ -372,8 +410,23 @@ async def on_message(new_msg: discord.Message) -> None:
     fallback_attempted = False
     
     try:
+        logging.info(f"Starting chat completion. Model: {model}, Base URL: {base_url}, Web Search: {'web_search' in (extra_body or {})}")
+        logging.info(f"🔍 Full openai_kwargs being sent:")
+        logging.info(f"  - model: {openai_kwargs['model']}")
+        logging.info(f"  - stream: {openai_kwargs['stream']}")
+        logging.info(f"  - extra_body: {openai_kwargs['extra_body']}")
+        logging.info(f"  - extra_headers: {openai_kwargs['extra_headers']}")
+        logging.info(f"  - extra_query: {openai_kwargs['extra_query']}")
+        logging.info(f"  - messages count: {len(openai_kwargs['messages'])}")
         async with new_msg.channel.typing():
+            response_started = False
             async for chunk in await openai_client.chat.completions.create(**openai_kwargs):
+                if not response_started:
+                    logging.info(f"✓ Got response from API. First chunk received. Usage info available: {hasattr(chunk, 'usage')}")
+                    response_started = True
+                    if hasattr(chunk, 'usage') and chunk.usage:
+                        logging.info(f"Token usage: prompt={chunk.usage.prompt_tokens}, completion={chunk.usage.completion_tokens}")
+                
                 if finish_reason != None:
                     break
 
@@ -451,6 +504,16 @@ async def on_message(new_msg: discord.Message) -> None:
                     fallback_extra_query = fallback_provider_config.get("extra_query")
                     fallback_extra_body = (fallback_provider_config.get("extra_body") or {}) | (fallback_model_params or {}) or None
                     
+                    # Add web_search support for fallback models
+                    if fallback_provider_config.get("enable_web_search", fallback_provider == "open-webui"):
+                        if fallback_extra_body is None:
+                            fallback_extra_body = {}
+                        fallback_extra_body = dict(fallback_extra_body)  # Make a copy
+                        fallback_extra_body["web_search"] = True
+                        logging.info(f"Web search ENABLED for fallback model {fallback_provider}/{fallback_model_name}")
+                    else:
+                        logging.debug(f"Web search disabled for fallback model {fallback_provider}/{fallback_model_name}")
+                    
                     # Reset for fallback attempt
                     curr_content = finish_reason = None
                     response_contents = []
@@ -463,7 +526,7 @@ async def on_message(new_msg: discord.Message) -> None:
                         extra_query=fallback_extra_query,
                         extra_body=fallback_extra_body
                     )
-                    
+                    logging.info(f"Fallback chat request. Model: {fallback_model_name}, Base URL: {fallback_provider_config['base_url']}, Web Search: {'web_search' in (fallback_extra_body or {})}")
                     async with new_msg.channel.typing():
                         async for chunk in await fallback_openai_client.chat.completions.create(**fallback_kwargs):
                             if finish_reason != None:
@@ -597,6 +660,17 @@ async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> Non
         extra_query = provider_config.get("extra_query")
         extra_body = (provider_config.get("extra_body") or {}) | (model_parameters or {}) or None
         
+        # Add web_search support for Open WebUI and other providers that support it
+        task_web_search_enabled = provider_config.get("enable_web_search", provider == "open-webui")
+        if task_web_search_enabled:
+            if extra_body is None:
+                extra_body = {}
+            extra_body = dict(extra_body)  # Make a copy to avoid modifying original
+            extra_body["web_search"] = True
+            logging.info(f"[Task: {task_name}] Web search ENABLED for {provider}/{model}")
+        else:
+            logging.debug(f"[Task: {task_name}] Web search disabled for {provider}/{model}")
+        
         # Get system prompt if configured
         system_prompt_text = config.get("system_prompt", "")
         if system_prompt_text:
@@ -632,6 +706,17 @@ async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> Non
                 fallback_extra_query = fallback_provider_config.get("extra_query")
                 fallback_extra_body = (fallback_provider_config.get("extra_body") or {}) | (fallback_model_params or {}) or None
                 
+                # Add web_search support for scheduled task fallback models
+                task_fallback_web_search = fallback_provider_config.get("enable_web_search", fallback_provider == "open-webui")
+                if task_fallback_web_search:
+                    if fallback_extra_body is None:
+                        fallback_extra_body = {}
+                    fallback_extra_body = dict(fallback_extra_body)  # Make a copy
+                    fallback_extra_body["web_search"] = True
+                    logging.info(f"[Task: {task_name}] Web search ENABLED for fallback model {fallback_provider}/{fallback_model_name}")
+                else:
+                    logging.debug(f"[Task: {task_name}] Web search disabled for fallback model {fallback_provider}/{fallback_model_name}")
+                
                 models_to_try.append((fallback_model_name, fallback_openai_client, fallback_model, fallback_extra_headers, fallback_extra_query, fallback_extra_body))
             except Exception as setup_error:
                 logging.warning(f"Scheduled task '{task_name}': Failed to setup fallback model '{fallback_model}': {setup_error}")
@@ -652,6 +737,7 @@ async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> Non
                     # Fallback model
                     attempt_model, attempt_client, attempt_model_name, attempt_extra_headers, attempt_extra_query, attempt_extra_body = model_info
                 
+                logging.info(f"[Task: {task_name}] API request to model={attempt_model}, Web Search: {'web_search' in (attempt_extra_body or {})}")
                 async for chunk in await attempt_client.chat.completions.create(
                     model=attempt_model,
                     messages=messages[::-1],
