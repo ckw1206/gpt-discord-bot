@@ -3,3 +3,7 @@ httpx
 openai
 pyyaml
 apscheduler>=3.10.0
+ollama
+python-dotenv
+typing_extensions
+rich

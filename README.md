@@ -167,9 +167,60 @@ scheduled_tasks:
    docker compose up
    ```
 
+## Ollama Integration (NEW)
+
+The bot now supports **Ollama provider with tool calling**!
+
+### Quick Setup
+
+Add to your `config.yaml`:
+
+```yaml
+providers:
+  ollama:
+    base_url: http://127.0.0.1:11434
+
+models:
+  ollama/qwen3:14b:
+    tools: ["web_search", "web_fetch", "get_temperature"]
+    system_prompt: "You are a helpful assistant"
+    think: true  # Optional: for reasoning models
+```
+
+### Available Tools
+
+- `web_search` - Search the internet
+- `web_fetch` - Get web page content  
+- `get_temperature` - Get weather data
+
+### Usage
+
+Works everywhere:
+- **Discord messages** - Tools execute automatically when needed
+- **Scheduled tasks** - Same full tool support as regular messages
+- **Reasoning models** - Enable `think: true` for deep reasoning
+
+### Features
+
+| Feature | Status |
+|---------|--------|
+| Ollama support | ✅ |
+| Tool calling | ✅ |
+| Per-model system prompts | ✅ |
+| Thinking mode | ✅ |
+| Backward compatible | ✅ |
+
+### System Prompt Priority
+
+1. Per-model `system_prompt` (highest priority)
+2. Global `system_prompt` (fallback)
+3. Model default (if neither specified)
+
 ## Notes
 
 - **Fallback models:** The bot now supports automatic failover with `fallback_models`. If your primary model is rate-limited or unavailable, the bot will try each fallback model in order. No admin notification is sent if a fallback succeeds.<br /><br />**Global example:**<br />```yaml<br />fallback_models:<br/>  - "groq/mixtral"<br />  - "ollama/llama2"<br />```<br /><br />For Discord messages, the response will still stream in real-time using whichever model succeeds. For scheduled tasks, the result will be sent normally.
+
+- **Ollama tools:** Ollama models support tool calling. Configure tools per-model in `config.yaml` under `models.ollama/model-name.tools`. Available tools: `web_search`, `web_fetch`, `get_temperature`. Tool results are automatically formatted and displayed in responses.
 
 - If you're having issues, try the suggestions [here](https://github.com/jakobdylanc/llmcord/issues/19)
 

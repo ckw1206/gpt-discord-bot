@@ -13,7 +13,8 @@ import httpx
 from openai import AsyncOpenAI
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import yaml
-import json
+
+from services.ollama import OllamaService
 
 # Enable httpx logging if DEBUG env var is set
 if os.environ.get("DEBUG"):
@@ -135,18 +136,7 @@ logging.info(f"📋 Available models in config: {list(config.get('models', {}).k
 logging.info(f"📋 Default curr_model set to: {curr_model}")
 logging.info(f"📋 All providers in config: {list(config.get('providers', {}).keys())}")
 
-# Log provider configs
-for provider_name, provider_config in config.get("providers", {}).items():
-    web_search_status = "✓ ENABLED" if provider_config.get("enable_web_search", provider_name == "open-webui") else "✗ DISABLED"
-    logging.info(f"  Provider '{provider_name}': web_search {web_search_status}")
 
-# Log web search configuration at startup
-for provider_name, provider_config in config.get("providers", {}).items():
-    web_search_enabled = provider_config.get("enable_web_search", provider_name == "open-webui")
-    if web_search_enabled:
-        logging.info(f"✓ Web Search enabled for provider: {provider_name}")
-    else:
-        logging.debug(f"✗ Web Search disabled for provider: {provider_name}")
 
 msg_nodes = {}
 last_task_time = 0
@@ -274,36 +264,10 @@ async def on_message(new_msg: discord.Message) -> None:
     logging.info(f"Using model: {provider_slash_model}")
     
     provider_config = config["providers"][provider]
-
-    base_url = provider_config["base_url"]
-    api_key = provider_config.get("api_key", "sk-no-key-required")
-    openai_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
-
     model_parameters = config["models"].get(provider_slash_model, None)
     
     logging.info(f"Model '{provider_slash_model}' exists in config.models: {provider_slash_model in config.get('models', {})}")
     logging.info(f"Model parameters from config: {model_parameters}")
-
-    extra_headers = provider_config.get("extra_headers")
-    extra_query = provider_config.get("extra_query")
-    logging.debug(f"Provider '{provider}' extra_body config: {provider_config.get('extra_body')}")
-    logging.debug(f"Model '{provider_slash_model}' parameters: {model_parameters}")
-    extra_body = (provider_config.get("extra_body") or {}) | (model_parameters or {}) or None
-    logging.debug(f"Merged extra_body: {extra_body}")
-    
-    logging.debug(f"Initial extra_body (before web_search): {extra_body}")
-    
-    # Add web_search support for Open WebUI and other providers that support it
-    web_search_enabled = provider_config.get("enable_web_search", provider == "open-webui")
-    if web_search_enabled:
-        if extra_body is None:
-            extra_body = {}
-        extra_body = dict(extra_body)  # Make a copy to avoid modifying original
-        extra_body["web_search"] = True
-        logging.info(f"Web search ENABLED for {provider}/{model}")
-        logging.info(f"extra_body after adding web_search: {extra_body}")
-    else:
-        logging.debug(f"Web search disabled for {provider}/{model}")
 
     accept_images = any(x in provider_slash_model.lower() for x in VISION_MODEL_TAGS)
     accept_usernames = any(provider_slash_model.lower().startswith(x) for x in PROVIDERS_SUPPORTING_USERNAMES)
@@ -396,28 +360,36 @@ async def on_message(new_msg: discord.Message) -> None:
     logging.info(f"Message received (user ID: {new_msg.author.id}, attachments: {len(new_msg.attachments)}, conversation length: {len(messages)}):\n{new_msg.content}")
     logging.debug(f"Provider: {provider}, Model: {model}, Web Search Enabled: {provider_config.get('enable_web_search', provider == 'open-webui')}")
 
-    if system_prompt := config.get("system_prompt"):
+    # Get system prompt from model config or global config
+    model_system_prompt = None
+    if model_parameters and isinstance(model_parameters, dict):
+        model_system_prompt = model_parameters.get("system_prompt")
+    
+    final_system_prompt = model_system_prompt or config.get("system_prompt")
+    
+    if final_system_prompt:
         now = datetime.now().astimezone()
-
-        system_prompt = system_prompt.replace("{date}", now.strftime("%B %d %Y")).replace("{time}", now.strftime("%H:%M:%S %Z%z")).strip()
+        final_system_prompt = final_system_prompt.replace("{date}", now.strftime("%B %d %Y")).replace("{time}", now.strftime("%H:%M:%S %Z%z")).strip()
         if accept_usernames:
-            system_prompt += "\n\nUser's names are their Discord IDs and should be typed as '<@ID>'."
+            final_system_prompt += "\n\nUser's names are their Discord IDs and should be typed as '<@ID>'."
 
-        messages.append(dict(role="system", content=system_prompt))
+    # Prepare messages for API (content-text only for compatibility)
+    api_messages = []
+    for msg in messages[::-1]:
+        if isinstance(msg.get("content"), list):
+            # Extract text from complex content
+            text_parts = [c.get("text", "") for c in msg["content"] if c.get("type") == "text"]
+            api_messages.append({"role": msg["role"], "content": " ".join(text_parts)})
+        else:
+            api_messages.append(msg)
+    
+    if final_system_prompt:
+        api_messages.append({"role": "system", "content": final_system_prompt})
 
     # Generate and send response message(s) (can be multiple if response is long)
     curr_content = finish_reason = None
     response_msgs = []
     response_contents = []
-
-    openai_kwargs = dict(model=model, messages=messages[::-1], stream=True, extra_headers=extra_headers, extra_query=extra_query, extra_body=extra_body)
-
-    logging.info(f"📤 OpenAI API kwargs: model={openai_kwargs['model']}, stream={openai_kwargs['stream']}")
-    logging.info(f"📤 extra_body content: {openai_kwargs['extra_body']}")
-    if openai_kwargs['extra_body'] and 'web_search' in openai_kwargs['extra_body']:
-        logging.info(f"✓✓✓ web_search field confirmed in openai_kwargs: {openai_kwargs['extra_body']['web_search']}")
-    else:
-        logging.warning(f"❌ web_search NOT in openai_kwargs! extra_body: {openai_kwargs['extra_body']}")
 
     show_embed_color = config.get("show_embed_color", True)
     if use_plain_responses := config.get("use_plain_responses", False):
@@ -439,75 +411,156 @@ async def on_message(new_msg: discord.Message) -> None:
     model_used = provider_slash_model
     fallback_attempted = False
     
+    # Check if this is an Ollama provider
+    is_ollama_provider = provider == "ollama"
+    
     try:
-        logging.info(f"Starting chat completion. Model: {model}, Base URL: {base_url}, Web Search: {'web_search' in (extra_body or {})}")
-        logging.info(f"🔍 Full openai_kwargs being sent:")
-        logging.info(f"  - model: {openai_kwargs['model']}")
-        logging.info(f"  - stream: {openai_kwargs['stream']}")
-        logging.info(f"  - extra_body: {openai_kwargs['extra_body']}")
-        logging.info(f"  - extra_headers: {openai_kwargs['extra_headers']}")
-        logging.info(f"  - extra_query: {openai_kwargs['extra_query']}")
-        logging.info(f"  - messages count: {len(openai_kwargs['messages'])}")
-        async with new_msg.channel.typing():
-            response_started = False
-            async for chunk in await openai_client.chat.completions.create(
-                model=openai_kwargs['model'],
-                messages=openai_kwargs['messages'],
-                stream=openai_kwargs['stream'],
-                extra_headers=openai_kwargs['extra_headers'],
-                extra_query=openai_kwargs['extra_query'],
-                extra_body=openai_kwargs['extra_body']
-            ):
-                if not response_started:
-                    logging.info(f"✓ Got response from API. First chunk received. Usage info available: {hasattr(chunk, 'usage')}")
-                    response_started = True
-                    if hasattr(chunk, 'usage') and chunk.usage:
-                        logging.info(f"Token usage: prompt={chunk.usage.prompt_tokens}, completion={chunk.usage.completion_tokens}")
+        if is_ollama_provider:
+            # Use OllamaService for ollama provider
+            logging.info(f"Using OllamaService for {provider}/{model}")
+            
+            ollama_host = provider_config["base_url"]
+            ollama_service = OllamaService(host=ollama_host)
+            
+            # Get tools from model config
+            tools_enabled = []
+            if model_parameters and isinstance(model_parameters, dict):
+                tools_enabled = model_parameters.get("tools", [])
+                think_enabled = model_parameters.get("think", False)
+            else:
+                think_enabled = False
+            
+            logging.info(f"Ollama config - Tools: {tools_enabled}, Thinking: {think_enabled}")
+            
+            async with new_msg.channel.typing():
+                # Run OllamaService in thread pool
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None,
+                    ollama_service.run,
+                    api_messages,
+                    model,
+                    tools_enabled,
+                    think_enabled
+                )
                 
-                if finish_reason != None:
-                    break
-
-                if not (choice := chunk.choices[0] if chunk.choices else None):
-                    continue
-
-                finish_reason = choice.finish_reason
-
-                prev_content = curr_content or ""
-                curr_content = choice.delta.content or ""
-
-                new_content = prev_content if finish_reason == None else (prev_content + curr_content)
-
-                if response_contents == [] and new_content == "":
-                    continue
-
-                if start_next_msg := response_contents == [] or len(response_contents[-1] + new_content) > max_message_length:
-                    response_contents.append("")
-
-                response_contents[-1] += new_content
-
-                if not use_plain_responses:
-                    time_delta = datetime.now().timestamp() - last_task_time
-
-                    ready_to_edit = time_delta >= EDIT_DELAY_SECONDS
-                    msg_split_incoming = finish_reason == None and len(response_contents[-1] + curr_content) > max_message_length
-                    is_final_edit = finish_reason != None or msg_split_incoming
-                    is_good_finish = finish_reason != None and finish_reason.lower() in ("stop", "end_turn")
-
-                    if start_next_msg or ready_to_edit or is_final_edit:
-                        # Strip thinking tags before displaying
-                        display_content = strip_thinking_tags(response_contents[-1]) if is_final_edit else (response_contents[-1] + STREAMING_INDICATOR)
-                        embed.description = display_content
-                        
-                        if show_embed_color:
-                            embed.color = EMBED_COLOR_COMPLETE if msg_split_incoming or is_good_finish else EMBED_COLOR_INCOMPLETE
-
-                        if start_next_msg:
-                            await reply_helper(embed=embed, silent=True)
+                ollama_response = result.get("content", "")
+                tool_results = result.get("tool_results", [])
+                
+                # Strip thinking tags
+                ollama_response = strip_thinking_tags(ollama_response)
+                
+                if tool_results:
+                    logging.info(f"Tool results: {len(tool_results)} tools executed")
+                    ollama_response += "\n\n**Tool Results:**\n" + "\n".join(tool_results)
+                
+                # Split response into chunks if needed
+                if ollama_response:
+                    for i in range(0, len(ollama_response), max_message_length):
+                        chunk = ollama_response[i:i+max_message_length]
+                        response_contents.append(chunk)
+                
+                # Display responses
+                if use_plain_responses:
+                    for content in response_contents:
+                        clean_content = strip_thinking_tags(content)
+                        if clean_content:
+                            await reply_helper(content=clean_content)
+                else:
+                    if not response_contents:
+                        response_contents.append("(No response)")
+                    
+                    for idx, content in enumerate(response_contents):
+                        if idx == 0 and len(response_contents) == 1:
+                            embed.description = strip_thinking_tags(content)
+                            if show_embed_color:
+                                embed.color = EMBED_COLOR_COMPLETE
+                            await reply_helper(embed=embed)
+                        elif idx == 0:
+                            first_embed = discord.Embed.from_dict(dict(fields=[dict(name=warning, value="", inline=False) for warning in sorted(user_warnings)]))
+                            first_embed.description = strip_thinking_tags(content)
+                            if show_embed_color:
+                                first_embed.color = EMBED_COLOR_COMPLETE
+                            await reply_helper(embed=first_embed)
                         else:
-                            await asyncio.sleep(EDIT_DELAY_SECONDS - time_delta)
-                            await response_msgs[-1].edit(embed=embed)
+                            await reply_helper(content=strip_thinking_tags(content))
+        
+        else:
+            # Use AsyncOpenAI for other providers
+            logging.info(f"Using AsyncOpenAI for {provider}/{model}")
+            
+            base_url = provider_config["base_url"]
+            api_key = provider_config.get("api_key", "sk-no-key-required")
+            openai_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
 
-                        last_task_time = datetime.now().timestamp()
+            extra_headers = provider_config.get("extra_headers")
+            extra_query = provider_config.get("extra_query")
+            
+            # Build extra_body from provider and model config
+            extra_body = (provider_config.get("extra_body") or {}) | (model_parameters or {}) or None
+            
+            openai_kwargs = dict(model=model, messages=api_messages, stream=True, extra_headers=extra_headers, extra_query=extra_query, extra_body=extra_body)
+            
+            async with new_msg.channel.typing():
+                response_started = False
+                async for chunk in await openai_client.chat.completions.create(
+                    model=openai_kwargs['model'],
+                    messages=openai_kwargs['messages'],
+                    stream=openai_kwargs['stream'],
+                    extra_headers=openai_kwargs['extra_headers'],
+                    extra_query=openai_kwargs['extra_query'],
+                    extra_body=openai_kwargs['extra_body']
+                ):
+                    if not response_started:
+                        logging.info(f"✓ Got response from API. First chunk received. Usage info available: {hasattr(chunk, 'usage')}")
+                        response_started = True
+                        if hasattr(chunk, 'usage') and chunk.usage:
+                            logging.info(f"Token usage: prompt={chunk.usage.prompt_tokens}, completion={chunk.usage.completion_tokens}")
+                    
+                    if finish_reason != None:
+                        break
+
+                    if not (choice := chunk.choices[0] if chunk.choices else None):
+                        continue
+
+                    finish_reason = choice.finish_reason
+
+                    prev_content = curr_content or ""
+                    curr_content = choice.delta.content or ""
+
+                    new_content = prev_content if finish_reason == None else (prev_content + curr_content)
+
+                    if response_contents == [] and new_content == "":
+                        continue
+
+                    if start_next_msg := response_contents == [] or len(response_contents[-1] + new_content) > max_message_length:
+                        response_contents.append("")
+
+                    response_contents[-1] += new_content
+
+                    if not use_plain_responses:
+                        time_delta = datetime.now().timestamp() - last_task_time
+
+                        ready_to_edit = time_delta >= EDIT_DELAY_SECONDS
+                        msg_split_incoming = finish_reason == None and len(response_contents[-1] + curr_content) > max_message_length
+                        is_final_edit = finish_reason != None or msg_split_incoming
+                        is_good_finish = finish_reason != None and finish_reason.lower() in ("stop", "end_turn")
+
+                        if start_next_msg or ready_to_edit or is_final_edit:
+                            # Strip thinking tags before displaying
+                            display_content = strip_thinking_tags(response_contents[-1]) if is_final_edit else (response_contents[-1] + STREAMING_INDICATOR)
+                            embed.description = display_content
+                            
+                            if show_embed_color:
+                                embed.color = EMBED_COLOR_COMPLETE if msg_split_incoming or is_good_finish else EMBED_COLOR_INCOMPLETE
+
+                            if start_next_msg:
+                                await reply_helper(embed=embed, silent=True)
+                            else:
+                                await asyncio.sleep(EDIT_DELAY_SECONDS - time_delta)
+                                await response_msgs[-1].edit(embed=embed)
+
+                            last_task_time = datetime.now().timestamp()
 
             if use_plain_responses:
                 for content in response_contents:
@@ -540,16 +593,6 @@ async def on_message(new_msg: discord.Message) -> None:
                     fallback_extra_headers = fallback_provider_config.get("extra_headers")
                     fallback_extra_query = fallback_provider_config.get("extra_query")
                     fallback_extra_body = (fallback_provider_config.get("extra_body") or {}) | (fallback_model_params or {}) or None
-                    
-                    # Add web_search support for fallback models
-                    if fallback_provider_config.get("enable_web_search", fallback_provider == "open-webui"):
-                        if fallback_extra_body is None:
-                            fallback_extra_body = {}
-                        fallback_extra_body = dict(fallback_extra_body)  # Make a copy
-                        fallback_extra_body["web_search"] = True
-                        logging.info(f"Web search ENABLED for fallback model {fallback_provider}/{fallback_model_name}")
-                    else:
-                        logging.debug(f"Web search disabled for fallback model {fallback_provider}/{fallback_model_name}")
                     
                     # Reset for fallback attempt
                     curr_content = finish_reason = None
@@ -691,135 +734,154 @@ async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> Non
         logging.info(f"━━━ Scheduled Task '{task_name}' ━━━")
         logging.info(f"Using model: {model_name}")
         
-        base_url = provider_config["base_url"]
-        api_key = provider_config.get("api_key", "sk-no-key-required")
-        openai_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
-        
         model_parameters = config["models"].get(model_name, None)
         
         logging.info(f"Model '{model_name}' exists in config.models: {model_name in config.get('models', {})}")
         logging.info(f"Model parameters from config: {model_parameters}")
         
-        extra_headers = provider_config.get("extra_headers")
-        extra_query = provider_config.get("extra_query")
-        extra_body = (provider_config.get("extra_body") or {}) | (model_parameters or {}) or None
+        # Get system prompt from model config or global config
+        model_system_prompt = None
+        if model_parameters and isinstance(model_parameters, dict):
+            model_system_prompt = model_parameters.get("system_prompt")
         
-        # Add web_search support for Open WebUI and other providers that support it
-        task_web_search_enabled = provider_config.get("enable_web_search", provider == "open-webui")
-        if task_web_search_enabled:
-            if extra_body is None:
-                extra_body = {}
-            extra_body = dict(extra_body)  # Make a copy to avoid modifying original
-            extra_body["web_search"] = True
-            logging.info(f"[Task: {task_name}] Web search ENABLED for {provider}/{model}")
-        else:
-            logging.debug(f"[Task: {task_name}] Web search disabled for {provider}/{model}")
-        
-        # Get system prompt if configured
-        system_prompt_text = config.get("system_prompt", "")
-        if system_prompt_text:
+        task_system_prompt = model_system_prompt or config.get("system_prompt", "")
+        if task_system_prompt:
             now = datetime.now().astimezone()
-            system_prompt_text = system_prompt_text.replace("{date}", now.strftime("%B %d %Y")).replace("{time}", now.strftime("%H:%M:%S %Z%z")).strip()
+            task_system_prompt = task_system_prompt.replace("{date}", now.strftime("%B %d %Y")).replace("{time}", now.strftime("%H:%M:%S %Z%z")).strip()
         
-        # Build messages
-        messages = [{"role": "user", "content": prompt}]
-        if system_prompt_text:
-            messages.append({"role": "system", "content": system_prompt_text})
-        
+        # Build messages for API
+        task_messages = [{"role": "user", "content": prompt}]
+        if task_system_prompt:
+            task_messages.append({"role": "system", "content": task_system_prompt})
         
         # Stream response
         response_text = ""
-        models_to_try = [(model, openai_client, model_name)]
         
-        # Add fallback models if configured (task-specific or global)
-        fallback_models = task_config.get("fallback_models") or config.get("fallback_models", []) or []
+        # Check if this is an Ollama provider
+        is_ollama = provider == "ollama"
         
-        # Build list of all models to try
-        for fallback_model in fallback_models:
-            if not fallback_model or not str(fallback_model).strip():
-                continue
-            try:
-                fallback_provider, fallback_model_name = fallback_model.removesuffix(":vision").split("/", 1)
-                fallback_provider_config = config["providers"][fallback_provider]
-                fallback_openai_client = AsyncOpenAI(
-                    base_url=fallback_provider_config["base_url"],
-                    api_key=fallback_provider_config.get("api_key", "sk-no-key-required")
-                )
-                fallback_model_params = config["models"].get(fallback_model, None)
-                fallback_extra_headers = fallback_provider_config.get("extra_headers")
-                fallback_extra_query = fallback_provider_config.get("extra_query")
-                fallback_extra_body = (fallback_provider_config.get("extra_body") or {}) | (fallback_model_params or {}) or None
-                
-                # Add web_search support for scheduled task fallback models
-                task_fallback_web_search = fallback_provider_config.get("enable_web_search", fallback_provider == "open-webui")
-                if task_fallback_web_search:
-                    if fallback_extra_body is None:
-                        fallback_extra_body = {}
-                    fallback_extra_body = dict(fallback_extra_body)  # Make a copy
-                    fallback_extra_body["web_search"] = True
-                    logging.info(f"[Task: {task_name}] Web search ENABLED for fallback model {fallback_provider}/{fallback_model_name}")
-                else:
-                    logging.debug(f"[Task: {task_name}] Web search disabled for fallback model {fallback_provider}/{fallback_model_name}")
-                
-                models_to_try.append((fallback_model_name, fallback_openai_client, fallback_model, fallback_extra_headers, fallback_extra_query, fallback_extra_body))
-            except Exception as setup_error:
-                logging.warning(f"Scheduled task '{task_name}': Failed to setup fallback model '{fallback_model}': {setup_error}")
-        
-        last_error = None
-        for attempt_idx, model_info in enumerate(models_to_try):
-            try:
-                response_text = ""
-                if attempt_idx == 0:
-                    # Primary model
-                    attempt_model = model
-                    attempt_client = openai_client
-                    attempt_model_name = model_name
-                    attempt_extra_headers = extra_headers
-                    attempt_extra_query = extra_query
-                    attempt_extra_body = extra_body
-                else:
-                    # Fallback model
-                    attempt_model, attempt_client, attempt_model_name, attempt_extra_headers, attempt_extra_query, attempt_extra_body = model_info
-                
-                logging.info(f"[Task: {task_name}] API request to model={attempt_model}, Web Search: {'web_search' in (attempt_extra_body or {})}")
-                async for chunk in await attempt_client.chat.completions.create(
-                    model=attempt_model,
-                    messages=messages[::-1],
-                    stream=True,
-                    extra_headers=attempt_extra_headers,
-                    extra_query=attempt_extra_query,
-                    extra_body=attempt_extra_body
-                ):
-                    if choice := chunk.choices[0] if chunk.choices else None:
-                        response_text += choice.delta.content or ""
-                
-                # Success - break out of retry loop
-                if attempt_idx > 0:
-                    logging.info(f"Scheduled task '{task_name}': Fallback model [{attempt_idx}/{len(models_to_try)-1}] '{attempt_model_name}' succeeded")
-                break
-                
-            except Exception as e:
-                last_error = e
-                if attempt_idx == 0:
-                    # Primary model failed
-                    logging.warning(f"Scheduled task '{task_name}': Primary model failed: {parse_error_message(e)}")
-                    if len(models_to_try) > 1:
-                        logging.info(f"Scheduled task '{task_name}': Attempting {len(models_to_try) - 1} fallback model(s)")
-                    else:
-                        # No fallback
-                        raise
-                else:
-                    # Fallback failed
-                    fallback_num = attempt_idx
-                    total_fallbacks = len(models_to_try) - 1
-                    logging.warning(f"Scheduled task '{task_name}': Fallback model [{fallback_num}/{total_fallbacks}] failed: {parse_error_message(e)}")
-                    if attempt_idx < len(models_to_try) - 1:
-                        # More fallbacks to try
+        if is_ollama:
+            # Setup for Ollama
+            ollama_host = provider_config["base_url"]
+            ollama_service = OllamaService(host=ollama_host)
+            
+            # Get tools from model config
+            tools_enabled = []
+            think_enabled = False
+            if model_parameters and isinstance(model_parameters, dict):
+                tools_enabled = model_parameters.get("tools", [])
+                think_enabled = model_parameters.get("think", False)
+            
+            logging.info(f"[Task: {task_name}] Ollama config - Tools: {tools_enabled}, Thinking: {think_enabled}")
+            
+            # Run primary Ollama model
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                ollama_service.run,
+                task_messages,
+                model,
+                tools_enabled,
+                think_enabled
+            )
+            
+            response_text = result.get("content", "")
+            tool_results = result.get("tool_results", [])
+            
+            # Strip thinking tags
+            response_text = strip_thinking_tags(response_text)
+            
+            if tool_results:
+                logging.info(f"[Task: {task_name}] Tool results: {len(tool_results)} tools executed")
+                response_text += "\n\n**Tool Results:**\n" + "\n".join(tool_results)
+        else:
+            # Setup for OpenAI-compatible providers
+            base_url = provider_config["base_url"]
+            api_key = provider_config.get("api_key", "sk-no-key-required")
+            openai_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+            
+            extra_headers = provider_config.get("extra_headers")
+            extra_query = provider_config.get("extra_query")
+            extra_body = (provider_config.get("extra_body") or {}) | (model_parameters or {}) or None
+            
+
+            
+            models_to_try = [(model, openai_client, model_name, extra_headers, extra_query, extra_body)]
+            
+            # Add fallback models if configured (task-specific or global)
+            fallback_models = task_config.get("fallback_models") or config.get("fallback_models", []) or []
+            
+            # Build list of all models to try
+            for fallback_model in fallback_models:
+                if not fallback_model or not str(fallback_model).strip():
+                    continue
+                try:
+                    fallback_provider, fallback_model_name = fallback_model.removesuffix(":vision").split("/", 1)
+                    fallback_provider_config = config["providers"][fallback_provider]
+                    
+                    if fallback_provider == "ollama":
+                        # Skip ollama as fallback for now (can be enhanced later)
+                        logging.debug(f"[Task: {task_name}] Skipping ollama fallback model (not yet supported for fallback)")
                         continue
+                    
+                    fallback_openai_client = AsyncOpenAI(
+                        base_url=fallback_provider_config["base_url"],
+                        api_key=fallback_provider_config.get("api_key", "sk-no-key-required")
+                    )
+                    fallback_model_params = config["models"].get(fallback_model, None)
+                    fallback_extra_headers = fallback_provider_config.get("extra_headers")
+                    fallback_extra_query = fallback_provider_config.get("extra_query")
+                    fallback_extra_body = (fallback_provider_config.get("extra_body") or {}) | (fallback_model_params or {}) or None
+                    
+                    models_to_try.append((fallback_model_name, fallback_openai_client, fallback_model, fallback_extra_headers, fallback_extra_query, fallback_extra_body))
+                except Exception as setup_error:
+                    logging.warning(f"Scheduled task '{task_name}': Failed to setup fallback model '{fallback_model}': {setup_error}")
+            
+            last_error = None
+            for attempt_idx, model_info in enumerate(models_to_try):
+                try:
+                    response_text = ""
+                    attempt_model, attempt_client, attempt_model_name, attempt_extra_headers, attempt_extra_query, attempt_extra_body = model_info
+                    
+                    logging.info(f"[Task: {task_name}] API request to model={attempt_model}")
+                    async for chunk in await attempt_client.chat.completions.create(
+                        model=attempt_model,
+                        messages=task_messages[::-1],
+                        stream=True,
+                        extra_headers=attempt_extra_headers,
+                        extra_query=attempt_extra_query,
+                        extra_body=attempt_extra_body
+                    ):
+                        if choice := chunk.choices[0] if chunk.choices else None:
+                            response_text += choice.delta.content or ""
+                    
+                    # Success - break out of retry loop
+                    if attempt_idx > 0:
+                        logging.info(f"Scheduled task '{task_name}': Fallback model [{attempt_idx}/{len(models_to_try)-1}] '{attempt_model_name}' succeeded")
+                    break
+                    
+                except Exception as e:
+                    last_error = e
+                    if attempt_idx == 0:
+                        # Primary model failed
+                        logging.warning(f"Scheduled task '{task_name}': Primary model failed: {parse_error_message(e)}")
+                        if len(models_to_try) > 1:
+                            logging.info(f"Scheduled task '{task_name}': Attempting {len(models_to_try) - 1} fallback model(s)")
+                        else:
+                            # No fallback
+                            raise
                     else:
-                        # Last model failed
-                        logging.error(f"Scheduled task '{task_name}': All models exhausted")
-                        raise
+                        # Fallback failed
+                        fallback_num = attempt_idx
+                        total_fallbacks = len(models_to_try) - 1
+                        logging.warning(f"Scheduled task '{task_name}': Fallback model [{fallback_num}/{total_fallbacks}] failed: {parse_error_message(e)}")
+                        if attempt_idx < len(models_to_try) - 1:
+                            # More fallbacks to try
+                            continue
+                        else:
+                            # Last model failed
+                            logging.error(f"Scheduled task '{task_name}': All models exhausted")
+                            raise
         
         # Send response in chunks if needed
         max_message_length = 4096
