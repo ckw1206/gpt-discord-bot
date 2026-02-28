@@ -37,6 +37,7 @@ EMBED_COLOR_INCOMPLETE = discord.Color.orange()
 STREAMING_INDICATOR = " ⚪"
 EDIT_DELAY_SECONDS = 1
 MAX_MESSAGE_NODES = 500
+RESPONSE_TIMEOUT_SECONDS = 60  # per-model timeout; on expiry, fallback models are tried
 
 
 def strip_thinking(text: str) -> str:
@@ -44,7 +45,6 @@ def strip_thinking(text: str) -> str:
 
 
 def get_config(filename: str = "config.yaml") -> dict[str, Any]:
-    """Load and validate config.yaml with comprehensive checks."""
     return load_config_with_validation(filename)
 
 
@@ -61,7 +61,6 @@ def build_openai_client(provider_cfg: dict) -> AsyncOpenAI:
 
 
 def build_extra_body(provider_cfg: dict, model_params: Any, exclude: set[str] | None = None) -> dict | None:
-    """Merge provider extra_body with model params. Optionally exclude keys (e.g. 'tools', 'system_prompt') that are handled separately."""
     base = provider_cfg.get("extra_body") or {}
     params = model_params if isinstance(model_params, dict) else {}
     if exclude:
@@ -107,7 +106,6 @@ async def run_ollama(provider_cfg: dict, model: str, model_params: Any, messages
     ollama_service = OllamaService(host=provider_cfg["base_url"])
     tools = (model_params or {}).get("tools", []) if isinstance(model_params, dict) else []
     think = (model_params or {}).get("think", False) if isinstance(model_params, dict) else False
-    # OllamaService.run expects enable_tools= (same as test_ollama); keep only role/content for Ollama API
     ollama_messages = []
     for m in messages:
         content = m.get("content")
@@ -240,7 +238,6 @@ async def on_message(new_msg: discord.Message) -> None:
                     *[httpx_client.get(a.url) for a in good_att],
                     return_exceptions=True,
                 )
-
                 curr_node.text = "\n".join(
                     ([cleaned] if cleaned else [])
                     + ["\n".join(filter(None, (e.title, e.description, e.footer.text))) for e in curr_msg.embeds]
@@ -311,14 +308,12 @@ async def on_message(new_msg: discord.Message) -> None:
             sys_prompt = try_load_persona(persona_name) or ""
         if not sys_prompt:
             sys_prompt = model_params.get("system_prompt") or ""
-
     if not sys_prompt:
         global_persona = config.get("persona")
         if global_persona:
             sys_prompt = try_load_persona(global_persona) or ""
         if not sys_prompt:
             sys_prompt = config.get("system_prompt") or ""
-
     if sys_prompt:
         sys_prompt = format_system_prompt(sys_prompt, accept_usernames)
 
@@ -351,191 +346,168 @@ async def on_message(new_msg: discord.Message) -> None:
         msg_nodes[msg.id] = MsgNode(parent_msg=new_msg)
         await msg_nodes[msg.id].lock.acquire()
 
-    try:
-        if provider == "ollama":
-            async with new_msg.channel.typing():
-                result = await run_ollama(provider_cfg, model, model_params, api_messages)
-            text = strip_thinking(result.get("content", ""))
-            response_contents = [text[i:i+max_len] for i in range(0, len(text), max_len)] if text else []
+    # ── Helper: run one OpenAI-compat model with streaming ──────────────────
 
-            if use_plain:
-                for chunk in response_contents:
-                    if c := strip_thinking(chunk): await reply_helper(content=c)
-            else:
-                if not response_contents: response_contents = ["(No response)"]
-                for idx, chunk in enumerate(response_contents):
-                    if idx == 0:
-                        e = embed if len(response_contents) == 1 else discord.Embed.from_dict(dict(fields=[dict(name=w, value="", inline=False) for w in sorted(user_warnings)]))
-                        e.description = strip_thinking(chunk)
-                        if show_color: e.color = EMBED_COLOR_COMPLETE
-                        await reply_helper(embed=e)
-                    else:
-                        await reply_helper(content=strip_thinking(chunk))
+    async def run_openai_stream(
+        client: AsyncOpenAI,
+        model_name: str,
+        msgs: list,
+        tools: list,
+        extra_headers: Any,
+        extra_query: Any,
+        extra_body: Any,
+    ) -> None:
+        """Stream one OpenAI-compat model into response_contents. Raises on error/timeout."""
+        nonlocal curr_content, finish_reason
+        curr_content = finish_reason = None
 
-        else:
-            client = build_openai_client(provider_cfg)
-            
-            # Check if model supports tools (default: False for OpenAI/OpenRouter, True for Ollama)
-            # Only models that explicitly support tool calling can use tools
-            supports_tools = (model_params or {}).get("supports_tools", False) if isinstance(model_params, dict) else False
-            
-            # OpenAI/OpenRouter expect tools as list of {type, function: {name, description, parameters}}; don't put tools/system_prompt in extra_body
-            # Only include tools if the model explicitly supports them
-            tool_names = (model_params or {}).get("tools", []) if isinstance(model_params, dict) else []
-            api_tools = get_openai_tools(tool_names) if supports_tools and tool_names else []
-            
-            if tool_names and not supports_tools:
-                logging.warning(
-                    "Model '%s' has tools configured (%s) but 'supports_tools' is not set to true. "
-                    "Tools will be disabled. Most OpenRouter models don't support tool calling. "
-                    "Set 'supports_tools: true' only for models that support it (e.g., some Anthropic models).",
-                    model, tool_names
-                )
-            
-            extra_body = build_extra_body(
-                provider_cfg, model_params, exclude={"tools", "system_prompt", "supports_tools"}
-            )
-            extra_headers = provider_cfg.get("extra_headers")
-            extra_query = provider_cfg.get("extra_query")
+        create_kw: dict = dict(
+            model=model_name, messages=msgs, stream=True,
+            extra_headers=extra_headers, extra_query=extra_query, extra_body=extra_body,
+        )
+        if tools:
+            create_kw["tools"] = tools
 
-            async with new_msg.channel.typing():
-                create_kw: dict = dict(
-                    model=model, messages=api_messages, stream=True,
-                    extra_headers=extra_headers, extra_query=extra_query, extra_body=extra_body
-                )
-                if api_tools:
-                    create_kw["tools"] = api_tools
-                async for chunk in await client.chat.completions.create(**create_kw):
-                    if finish_reason: break
-                    choice = chunk.choices[0] if chunk.choices else None
-                    if not choice: continue
-                    finish_reason = choice.finish_reason
-                    prev, curr_content = curr_content or "", choice.delta.content or ""
-                    new_content = prev if not finish_reason else prev + curr_content
-                    if not response_contents and not new_content: continue
-
-                    if start_next := not response_contents or len(response_contents[-1] + new_content) > max_len:
-                        response_contents.append("")
-                    response_contents[-1] += new_content
-
-                    if not use_plain:
-                        td = datetime.now().timestamp() - last_task_time
-                        split_incoming = not finish_reason and len(response_contents[-1] + curr_content) > max_len
-                        is_final = finish_reason or split_incoming
-                        is_good = finish_reason and finish_reason.lower() in ("stop", "end_turn")
-
-                        if start_next or td >= EDIT_DELAY_SECONDS or is_final:
-                            embed.description = strip_thinking(response_contents[-1]) if is_final else response_contents[-1] + STREAMING_INDICATOR
-                            if show_color: embed.color = EMBED_COLOR_COMPLETE if split_incoming or is_good else EMBED_COLOR_INCOMPLETE
-                            if start_next:
-                                await reply_helper(embed=embed, silent=True)
-                            else:
-                                await asyncio.sleep(EDIT_DELAY_SECONDS - td)
-                                await response_msgs[-1].edit(embed=embed)
-                            last_task_time = datetime.now().timestamp()
-
-            if use_plain:
-                for chunk in response_contents:
-                    if c := strip_thinking(chunk): await reply_helper(content=c)
-
-    except Exception as e:
-        # Fallback order: model-level, then global
-        model_fallbacks = []
-        if isinstance(model_params, dict):
-            model_fallbacks = model_params.get("fallback_models") or []
-        fallbacks = (model_fallbacks or []) + (config.get("fallback_models", []) or [])
-        if fallbacks:
-            for fi, fb_model in enumerate(fallbacks):
-                if not fb_model or not fb_model.strip(): continue
-                logging.warning(f"Primary failed: {parse_error_message(e)}. Trying fallback [{fi+1}/{len(fallbacks)}]: {fb_model}")
-                try:
-                    fb_provider, fb_model_name = fb_model.removesuffix(":vision").split("/", 1)
-                    fb_cfg = config["providers"][fb_provider]
-                    fb_params = config["models"].get(fb_model)
-                    
-                    # Handle Ollama provider differently (uses different API)
-                    if fb_provider == "ollama":
-                        async with new_msg.channel.typing():
-                            result = await run_ollama(fb_cfg, fb_model_name, fb_params, api_messages)
-                        text = strip_thinking(result.get("content", ""))
-                        response_contents = [text[i:i+max_len] for i in range(0, len(text), max_len)] if text else []
-                        
-                        if use_plain:
-                            for chunk in response_contents:
-                                if c := strip_thinking(chunk): await reply_helper(content=c)
-                        else:
-                            if not response_contents: response_contents = ["(No response)"]
-                            for idx, chunk in enumerate(response_contents):
-                                if idx == 0:
-                                    e = embed if len(response_contents) == 1 else discord.Embed.from_dict(dict(fields=[dict(name=w, value="", inline=False) for w in sorted(user_warnings)]))
-                                    e.description = strip_thinking(chunk)
-                                    if show_color: e.color = EMBED_COLOR_COMPLETE
-                                    await reply_helper(embed=e)
-                                else:
-                                    await reply_helper(content=strip_thinking(chunk))
-                        logging.info(f"Fallback '{fb_model}' succeeded")
-                        break
-                    
-                    # Handle OpenAI/OpenRouter providers
-                    fb_client = build_openai_client(fb_cfg)
-                    
-                    # Check if fallback model supports tools
-                    fb_supports_tools = (fb_params or {}).get("supports_tools", False) if isinstance(fb_params, dict) else False
-                    fb_tool_names = (fb_params or {}).get("tools", []) if isinstance(fb_params, dict) else []
-                    fb_tools = get_openai_tools(fb_tool_names) if fb_supports_tools and fb_tool_names else []
-                    
-                    fb_extra_body = build_extra_body(fb_cfg, fb_params, exclude={"tools", "system_prompt", "supports_tools"})
-                    curr_content = finish_reason = None
-                    response_contents = []
-
-                    async with new_msg.channel.typing():
-                        fb_create_kw = dict(
-                            model=fb_model_name, messages=api_messages, stream=True,
-                            extra_headers=fb_cfg.get("extra_headers"), extra_query=fb_cfg.get("extra_query"), extra_body=fb_extra_body
-                        )
-                        if fb_tools:
-                            fb_create_kw["tools"] = fb_tools
-                        async for chunk in await fb_client.chat.completions.create(**fb_create_kw):
-                            if finish_reason: break
-                            choice = chunk.choices[0] if chunk.choices else None
-                            if not choice: continue
-                            finish_reason = choice.finish_reason
-                            prev, curr_content = curr_content or "", choice.delta.content or ""
-                            new_content = prev if not finish_reason else prev + curr_content
-                            if not response_contents and not new_content: continue
-                            if start_next := not response_contents or len(response_contents[-1] + new_content) > max_len:
-                                response_contents.append("")
-                            response_contents[-1] += new_content
-                            if not use_plain:
-                                td = datetime.now().timestamp() - last_task_time
-                                split_incoming = not finish_reason and len(response_contents[-1] + curr_content) > max_len
-                                is_final = finish_reason or split_incoming
-                                is_good = finish_reason and finish_reason.lower() in ("stop", "end_turn")
-                                if start_next or td >= EDIT_DELAY_SECONDS or is_final:
-                                    embed.description = strip_thinking(response_contents[-1]) if is_final else response_contents[-1] + STREAMING_INDICATOR
-                                    if show_color: embed.color = EMBED_COLOR_COMPLETE if split_incoming or is_good else EMBED_COLOR_INCOMPLETE
-                                    if start_next: await reply_helper(embed=embed, silent=True)
-                                    else:
-                                        await asyncio.sleep(EDIT_DELAY_SECONDS - td)
-                                        await response_msgs[-1].edit(embed=embed)
-                                    last_task_time = datetime.now().timestamp()
-                        if use_plain:
-                            for chunk in response_contents:
-                                if c := strip_thinking(chunk): await reply_helper(content=c)
-                    logging.info(f"Fallback '{fb_model}' succeeded")
+        async def _stream() -> None:
+            nonlocal curr_content, finish_reason
+            async for chunk in await client.chat.completions.create(**create_kw):
+                if finish_reason:
                     break
-                except Exception as fe:
-                    logging.warning(f"Fallback '{fb_model}' failed: {parse_error_message(fe)}")
-                    if fi == len(fallbacks) - 1:
-                        logging.exception("All fallbacks failed")
-                        await notify_admin_error(fe, f"All models failed in #{getattr(new_msg.channel, 'name', 'DM')}")
+                choice = chunk.choices[0] if chunk.choices else None
+                if not choice:
+                    continue
+                finish_reason = choice.finish_reason
+                prev, curr_content = curr_content or "", choice.delta.content or ""
+                new_content = prev if not finish_reason else prev + curr_content
+                if not response_contents and not new_content:
+                    continue
+
+                if start_next := not response_contents or len(response_contents[-1] + new_content) > max_len:
+                    response_contents.append("")
+                response_contents[-1] += new_content
+
+                if not use_plain:
+                    td = datetime.now().timestamp() - last_task_time
+                    split_incoming = not finish_reason and len(response_contents[-1] + curr_content) > max_len
+                    is_final = finish_reason or split_incoming
+                    is_good = finish_reason and finish_reason.lower() in ("stop", "end_turn")
+                    if start_next or td >= EDIT_DELAY_SECONDS or is_final:
+                        embed.description = strip_thinking(response_contents[-1]) if is_final else response_contents[-1] + STREAMING_INDICATOR
+                        if show_color:
+                            embed.color = EMBED_COLOR_COMPLETE if split_incoming or is_good else EMBED_COLOR_INCOMPLETE
+                        if start_next:
+                            await reply_helper(embed=embed, silent=True)
+                        else:
+                            await asyncio.sleep(EDIT_DELAY_SECONDS - td)
+                            await response_msgs[-1].edit(embed=embed)
+                        last_task_time = datetime.now().timestamp()
+
+        async with new_msg.channel.typing():
+            await asyncio.wait_for(_stream(), timeout=RESPONSE_TIMEOUT_SECONDS)
+
+        if use_plain:
+            for chunk in response_contents:
+                if c := strip_thinking(chunk):
+                    await reply_helper(content=c)
+
+    # ── Helper: run one Ollama model ────────────────────────────────────────
+
+    async def run_ollama_model(p_cfg: dict, mdl: str, params: Any) -> None:
+        """Run Ollama model into response_contents. Raises on error/timeout."""
+        async with new_msg.channel.typing():
+            result = await asyncio.wait_for(
+                run_ollama(p_cfg, mdl, params, api_messages),
+                timeout=RESPONSE_TIMEOUT_SECONDS,
+            )
+        text = strip_thinking(result.get("content", ""))
+        chunks = [text[i:i+max_len] for i in range(0, len(text), max_len)] if text else []
+        response_contents.extend(chunks)
+
+        if use_plain:
+            for chunk in chunks:
+                if c := strip_thinking(chunk):
+                    await reply_helper(content=c)
         else:
-            logging.exception("Error generating response")
-            await notify_admin_error(e, f"Failed in #{getattr(new_msg.channel, 'name', 'DM')}")
-            try:
-                await new_msg.reply("所有模型皆無法回應，已通知管理員。請稍後再試。")
-            except Exception:
-                pass
+            if not chunks:
+                response_contents.append("(No response)")
+                chunks = response_contents[-1:]
+            for idx, chunk in enumerate(chunks):
+                if idx == 0:
+                    e = embed if len(chunks) == 1 else discord.Embed.from_dict(
+                        dict(fields=[dict(name=w, value="", inline=False) for w in sorted(user_warnings)])
+                    )
+                    e.description = strip_thinking(chunk)
+                    if show_color:
+                        e.color = EMBED_COLOR_COMPLETE
+                    await reply_helper(embed=e)
+                else:
+                    await reply_helper(content=strip_thinking(chunk))
+
+    # ── Build full model list (primary + fallbacks) ─────────────────────────
+
+    model_fallbacks = (model_params or {}).get("fallback_models", []) if isinstance(model_params, dict) else []
+    global_fallbacks = config.get("fallback_models", []) or []
+    all_models = [provider_slash_model] + (model_fallbacks or []) + global_fallbacks
+
+    # ── Try each model in order ─────────────────────────────────────────────
+
+    for attempt_idx, attempt_model in enumerate(all_models):
+        if not attempt_model or not attempt_model.strip():
+            continue
+        is_primary = attempt_idx == 0
+        try:
+            a_provider, a_model = attempt_model.removesuffix(":vision").split("/", 1)
+            a_cfg = provider_cfg if is_primary else config["providers"][a_provider]
+            a_params = model_params if is_primary else config["models"].get(attempt_model)
+
+            if a_provider == "ollama":
+                await run_ollama_model(a_cfg, a_model, a_params)
+            else:
+                a_client = build_openai_client(a_cfg) if not is_primary else build_openai_client(provider_cfg)
+                supports_tools = (a_params or {}).get("supports_tools", False) if isinstance(a_params, dict) else False
+                tool_names = (a_params or {}).get("tools", []) if isinstance(a_params, dict) else []
+                if tool_names and not supports_tools:
+                    logging.warning(
+                        "Model '%s' has tools configured but 'supports_tools' is not true — tools disabled.",
+                        attempt_model,
+                    )
+                api_tools = get_openai_tools(tool_names) if supports_tools and tool_names else []
+                a_extra_body = build_extra_body(a_cfg, a_params, exclude={"tools", "system_prompt", "supports_tools"})
+                response_contents.clear()
+                await run_openai_stream(
+                    a_client, a_model, api_messages, api_tools,
+                    a_cfg.get("extra_headers"), a_cfg.get("extra_query"), a_extra_body,
+                )
+
+            if not is_primary:
+                logging.info(f"Fallback '{attempt_model}' succeeded")
+            break  # success
+
+        except asyncio.TimeoutError:
+            logging.warning(
+                f"{'Primary' if is_primary else 'Fallback'} model '{attempt_model}' "
+                f"timed out after {RESPONSE_TIMEOUT_SECONDS}s."
+                + (" Trying next fallback..." if attempt_idx < len(all_models) - 1 else " No more fallbacks.")
+            )
+            if attempt_idx == len(all_models) - 1:
+                await notify_admin_error(
+                    TimeoutError(f"All models timed out after {RESPONSE_TIMEOUT_SECONDS}s"),
+                    f"Timeout in #{getattr(new_msg.channel, 'name', 'DM')}",
+                )
+                try:
+                    await new_msg.reply("所有模型皆逾時，已通知管理員。請稍後再試。")
+                except Exception:
+                    pass
+
+        except Exception as e:
+            logging.warning(f"{'Primary' if is_primary else 'Fallback'} model '{attempt_model}' failed: {parse_error_message(e)}")
+            if attempt_idx == len(all_models) - 1:
+                logging.exception("All models failed")
+                await notify_admin_error(e, f"All models failed in #{getattr(new_msg.channel, 'name', 'DM')}")
+                try:
+                    await new_msg.reply("所有模型皆無法回應，已通知管理員。請稍後再試。")
+                except Exception:
+                    pass
 
     for rm in response_msgs:
         msg_nodes[rm.id].text = strip_thinking("".join(response_contents))
@@ -558,7 +530,6 @@ async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> Non
     model_name = task_config.get("model", curr_model)
     prompt = task_config.get("prompt", "Check my emails")
 
-    # Resolve target
     if channel_id:
         target = discord_bot.get_channel(channel_id)
         if not target:
@@ -580,67 +551,54 @@ async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> Non
 
     logging.info(f"━━━ Task '{task_name}' | {model_name} | params: {model_params}")
 
-    # System prompt: task persona > task-specific > model persona > model-specific > global persona > global
+    # System prompt resolution
     sys_prompt = ""
-
-    # Task-level persona or inline system prompt
     task_persona = task_config.get("persona")
     if task_persona:
         sys_prompt = try_load_persona(task_persona) or ""
     if not sys_prompt:
         sys_prompt = task_config.get("system_prompt") or ""
-
-    # Model-level persona or inline system prompt
     if not sys_prompt and isinstance(model_params, dict):
         model_persona = model_params.get("persona")
         if model_persona:
             sys_prompt = try_load_persona(model_persona) or ""
         if not sys_prompt:
             sys_prompt = model_params.get("system_prompt") or ""
-
-    # Global persona or global inline system prompt
     if not sys_prompt:
         global_persona = config.get("persona")
         if global_persona:
             sys_prompt = try_load_persona(global_persona) or ""
         if not sys_prompt:
             sys_prompt = config.get("system_prompt", "")
-
     if sys_prompt:
         sys_prompt = format_system_prompt(sys_prompt, False)
 
-    # Message order: system first (for Ollama/API), then user prompt
     task_messages = []
     if sys_prompt:
         task_messages.append({"role": "system", "content": sys_prompt})
     task_messages.append({"role": "user", "content": prompt})
 
-    # For Ollama: merge task-level tools/think with model params (task overrides)
-    if provider == "ollama":
-        effective_params = dict(model_params) if isinstance(model_params, dict) else {}
-        if "tools" in task_config:
-            effective_params["tools"] = task_config["tools"]
-        if "think" in task_config:
-            effective_params["think"] = task_config["think"]
-        model_params = effective_params
-    else:
-        # For OpenAI/OpenRouter: merge task-level tools so tasks can override model tools
-        effective_params = dict(model_params) if isinstance(model_params, dict) else {}
-        if "tools" in task_config:
-            effective_params["tools"] = task_config["tools"]
-        model_params = effective_params
+    # Merge task-level tool/think overrides into effective params
+    effective_params = dict(model_params) if isinstance(model_params, dict) else {}
+    if "tools" in task_config:
+        effective_params["tools"] = task_config["tools"]
+    if "think" in task_config and provider == "ollama":
+        effective_params["think"] = task_config["think"]
 
     response_text = ""
     try:
         if provider == "ollama":
-            result = await run_ollama(provider_cfg, model, model_params, task_messages)
+            result = await asyncio.wait_for(
+                run_ollama(provider_cfg, model, effective_params, task_messages),
+                timeout=RESPONSE_TIMEOUT_SECONDS,
+            )
             response_text = strip_thinking(result.get("content", ""))
         else:
             task_fallbacks = task_config.get("fallback_models") or []
             global_fallbacks = config.get("fallback_models", []) or []
             fallback_models = task_fallbacks + global_fallbacks
-            task_extra_body = build_extra_body(provider_cfg, model_params, exclude={"tools", "system_prompt"})
-            task_tools = get_openai_tools((model_params or {}).get("tools") if isinstance(model_params, dict) else None)
+            task_extra_body = build_extra_body(provider_cfg, effective_params, exclude={"tools", "system_prompt"})
+            task_tools = get_openai_tools((effective_params or {}).get("tools"))
             models_to_try = [(model, build_openai_client(provider_cfg), model_name,
                               provider_cfg.get("extra_headers"), provider_cfg.get("extra_query"),
                               task_extra_body, task_tools)]
@@ -661,43 +619,50 @@ async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> Non
             for ai, (am, ac, amn, aeh, aeq, aeb, atools) in enumerate(models_to_try):
                 try:
                     response_text = ""
-                    create_kw = dict(
-                        model=am, messages=task_messages, stream=True,
-                        extra_headers=aeh, extra_query=aeq, extra_body=aeb
-                    )
+                    create_kw = dict(model=am, messages=task_messages, stream=True,
+                                     extra_headers=aeh, extra_query=aeq, extra_body=aeb)
                     if atools:
                         create_kw["tools"] = atools
-                    async for chunk in await ac.chat.completions.create(**create_kw):
-                        if choice := (chunk.choices[0] if chunk.choices else None):
-                            response_text += choice.delta.content or ""
+
+                    async def _task_stream() -> None:
+                        nonlocal response_text
+                        async for chunk in await ac.chat.completions.create(**create_kw):
+                            if choice := (chunk.choices[0] if chunk.choices else None):
+                                response_text += choice.delta.content or ""
+
+                    await asyncio.wait_for(_task_stream(), timeout=RESPONSE_TIMEOUT_SECONDS)
                     if ai > 0: logging.info(f"Task '{task_name}': fallback '{amn}' succeeded")
                     break
+
+                except asyncio.TimeoutError:
+                    logging.warning(f"Task '{task_name}': {'primary' if ai == 0 else f'fallback [{ai}]'} '{amn}' timed out after {RESPONSE_TIMEOUT_SECONDS}s")
+                    if ai == len(models_to_try) - 1: raise
                 except Exception as e:
                     logging.warning(f"Task '{task_name}': {'primary' if ai == 0 else f'fallback [{ai}]'} failed: {parse_error_message(e)}")
                     if ai == len(models_to_try) - 1: raise
 
-        max_len = 4096
+        max_send = 4096
         if response_text:
-            for i in range(0, len(response_text), max_len):
+            for i in range(0, len(response_text), max_send):
                 try:
-                    await target.send(response_text[i:i+max_len])
+                    await target.send(response_text[i:i+max_send])
                 except discord.Forbidden:
                     logging.error(f"Task '{task_name}': Cannot DM user {user_id} (DMs disabled/blocked)"); return
             logging.info(f"Task '{task_name}' sent to {'channel ' + str(channel_id) if channel_id else 'user ' + str(user_id)}")
         else:
             await target.send(f"📧 No response from task '{task_name}'")
 
-    except discord.errors.HTTPException as e:
-        if e.code == 50007:
+    except (asyncio.TimeoutError, discord.errors.HTTPException, Exception) as e:
+        if isinstance(e, asyncio.TimeoutError):
+            logging.error(f"Task '{task_name}': all models timed out")
+            await notify_admin_error(TimeoutError(f"Task '{task_name}' timed out"), f"Task '{task_name}' timeout")
+        elif isinstance(e, discord.errors.HTTPException) and e.code == 50007:
             logging.error(f"Task '{task_name}': Cannot DM user {user_id} (error 50007)")
         else:
-            logging.exception(f"Task '{task_name}': Discord error")
-            await notify_admin_error(e, f"Task '{task_name}' Discord error")
-    except Exception as e:
-        logging.exception(f"Task '{task_name}' failed")
-        await notify_admin_error(e, f"Task '{task_name}' failed (all models)")
+            logging.exception(f"Task '{task_name}' failed")
+            await notify_admin_error(e, f"Task '{task_name}' failed (all models)")
         try:
-            await target.send(f"❌ Task '{task_name}' 無法完成，已通知管理員。請稍後再試。")
+            await target.send(f"❌ Task '{task_name}' 無法完成，已通知管理員。")
         except Exception:
             pass
 
@@ -717,19 +682,12 @@ def parse_cron(expr: str) -> dict[str, Any]:
 
 
 def setup_scheduled_tasks() -> None:
-    # Legacy single-task format (backwards compatibility)
     legacy = config.get("scheduled_tasks", {})
     if isinstance(legacy, dict) and "enabled" in legacy and "cron" in legacy:
         if legacy.get("enabled"):
             try:
-                scheduler.add_job(
-                    run_scheduled_task,
-                    "cron",
-                    id="email_check",
-                    replace_existing=True,
-                    args=["email_check", legacy],
-                    **parse_cron(legacy.get("cron", "0 9 * * *")),
-                )
+                scheduler.add_job(run_scheduled_task, "cron", id="email_check", replace_existing=True,
+                                   args=["email_check", legacy], **parse_cron(legacy.get("cron", "0 9 * * *")))
                 logging.info(f"Legacy scheduled task: {legacy.get('cron')}")
             except Exception as e:
                 logging.error(f"Failed to setup legacy task: {e}")
@@ -740,14 +698,8 @@ def setup_scheduled_tasks() -> None:
         if not isinstance(tc, dict) or not tc.get("enabled", False):
             continue
         try:
-            scheduler.add_job(
-                run_scheduled_task,
-                "cron",
-                id=f"scheduled_task_{name}",
-                replace_existing=True,
-                args=[name, tc],
-                **parse_cron(tc.get("cron", "0 9 * * *")),
-            )
+            scheduler.add_job(run_scheduled_task, "cron", id=f"scheduled_task_{name}", replace_existing=True,
+                               args=[name, tc], **parse_cron(tc.get("cron", "0 9 * * *")))
             logging.info(f"Scheduled task '{name}': {tc.get('cron')}")
         except Exception as e:
             logging.error(f"Failed to setup task '{name}': {e}")
