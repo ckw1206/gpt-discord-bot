@@ -125,8 +125,11 @@ Use `/clear` to reset the conversation history and message cache. This is useful
 | **channel_id** | Discord channel ID where the task result will be sent. **Example:** `1470093690549567498`<br /><br />**Use either `channel_id` OR `user_id`, not both.** |
 | **user_id** | Discord user ID for sending direct messages. Use this to send DM results to a specific user. **Example:** `467935812554850309`<br /><br />**Use either `channel_id` OR `user_id`, not both.** |
 | **model** | The LLM model to use for this task. **Example:** `"open-webui/gmail-checker"`<br /><br />**Must match a model defined in the `models` section.** |
-| **fallback_models** | *(Optional)* List of fallback models for this specific task. If not set, uses the global `fallback_models`. If set to an empty list, disables fallback for this task.<br /><br />**Example:** `fallback_models: ["groq/mixtral", "ollama/llama2"]` |
 | **prompt** | The message/prompt to send to the LLM for this task. **Example:** `"Summarize my recent emails"` |
+| **system_prompt** | *(Optional)* Override the system prompt for this task only. Task-level &gt; model-level &gt; global. Use `{date}` and `{time}` for current date/time. Use YAML pipe `|` for multi-line prompts. |
+| **tools** | *(Optional, Ollama only)* List of tools to enable for this task. Overrides the model's `tools` when set. Use when the task needs web search or other tools.<br /><br />**Example:** `tools: ["web_search", "web_fetch"]`<br /><br />**Available:** `web_search`, `web_fetch`, `visuals_core` (see Ollama Integration below). |
+| **think** | *(Optional, Ollama only)* Set to `true` to enable reasoning/thinking mode for this task. Overrides the model's `think` when set. |
+| **fallback_models** | *(Optional)* List of fallback models for this specific task. If not set, uses the global `fallback_models`. If set to an empty list, disables fallback for this task.<br /><br />**Example:** `fallback_models: ["groq/mixtral", "ollama/llama2"]` |
 
 **Example configuration:**
 ```yaml
@@ -152,6 +155,17 @@ scheduled_tasks:
     user_id: 12345678  # Sends as DM to this user
     model: "open-webui/llama3.2:1b"
     prompt: "Give me a daily summary of important items"
+
+  # Ollama task with tools (e.g. web search for market data)
+  market_brief:
+    enabled: true
+    cron: "30 8 * * 1-5"
+    channel_id: 12345678
+    model: "ollama/qwen3:14b"
+    prompt: "Summarize overnight moves in Taiwan and US markets."
+    system_prompt: "Reply in Traditional Chinese. Use web search for current data."
+    tools: ["web_search", "web_fetch"]
+    think: true
 ```
 
 3. Run the bot:
@@ -197,7 +211,7 @@ models:
 
 Works everywhere:
 - **Discord messages** - Tools execute automatically when needed
-- **Scheduled tasks** - Same full tool support as regular messages
+- **Scheduled tasks** - Use `tools` and optional `think` per task when the task's model is Ollama (e.g. `ollama/qwen3:14b`). Task-level `tools` / `think` override the model config. System prompt can be set per task with `system_prompt`.
 - **Reasoning models** - Enable `think: true` for deep reasoning
 
 ### Features
@@ -212,15 +226,22 @@ Works everywhere:
 
 ### System Prompt Priority
 
+**For Discord messages:**
 1. Per-model `system_prompt` (highest priority)
 2. Global `system_prompt` (fallback)
 3. Model default (if neither specified)
+
+**For scheduled tasks:**
+1. Task-level `system_prompt` (highest)
+2. Model-level `system_prompt`
+3. Global `system_prompt`
+4. Model default
 
 ## Notes
 
 - **Fallback models:** The bot now supports automatic failover with `fallback_models`. If your primary model is rate-limited or unavailable, the bot will try each fallback model in order. No admin notification is sent if a fallback succeeds.<br /><br />**Global example:**<br />```yaml<br />fallback_models:<br/>  - "groq/mixtral"<br />  - "ollama/llama2"<br />```<br /><br />For Discord messages, the response will still stream in real-time using whichever model succeeds. For scheduled tasks, the result will be sent normally.
 
-- **Ollama tools:** Ollama models support tool calling. Configure tools per-model in `config.yaml` under `models.ollama/model-name.tools`. Available tools: `web_search`, `web_fetch`, `get_temperature`. Tool results are automatically formatted and displayed in responses.
+- **Ollama tools:** Ollama models support tool calling. Configure tools per-model in `config.yaml` under `models.ollama/model-name.tools`. For **scheduled tasks** using an Ollama model, you can set `tools` (and `think`) on the task to override the model config or enable tools for that task. Available tools: `web_search`, `web_fetch`, `visuals_core`. Tool results are automatically formatted and displayed in responses.
 
 - If you're having issues, try the suggestions [here](https://github.com/jakobdylanc/llmcord/issues/19)
 

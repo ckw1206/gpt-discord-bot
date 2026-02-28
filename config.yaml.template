@@ -1,0 +1,135 @@
+# Discord settings:
+
+bot_token: 
+client_id: 
+status_message: 
+
+max_text: 100000
+max_images: 5
+max_messages: 25
+
+use_plain_responses: false
+show_embed_color: true  # Show green/orange bar on bot responses (set to false to disable)
+allow_dms: true
+
+permissions:
+  users:
+    admin_ids: []
+    allowed_ids: []
+    blocked_ids: []
+
+  roles:
+    allowed_ids: []
+    blocked_ids: []
+
+  channels:
+    allowed_ids: []
+    blocked_ids: []
+
+
+# LLM settings:
+
+providers:
+  # Remote providers:
+  azure-openai:
+    base_url: https://<resource name>.openai.azure.com/openai/deployments/<deployment name>
+    api_key: 
+    extra_query:
+      api-version: 2024-12-01-preview
+
+  google:
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai
+    api_key: 
+
+  groq:
+    base_url: https://api.groq.com/openai/v1
+    api_key: 
+
+  mistral:
+    base_url: https://api.mistral.ai/v1
+    api_key: 
+
+  openai:
+    base_url: https://api.openai.com/v1
+    api_key: 
+
+  openrouter:
+    base_url: https://openrouter.ai/api/v1
+    api_key: 
+
+  x-ai:
+    base_url: https://api.x.ai/v1
+    api_key: 
+
+  # Local providers:
+  lmstudio:
+    base_url: http://localhost:1234/v1
+
+  ollama:
+    base_url: http://localhost:11434
+    # api_key is optional for local Ollama, but can be set if needed
+    
+  vllm:
+    base_url: http://localhost:8000/v1
+
+  open-webui:
+    base_url: http://localhost:3000/api
+    api_key: 
+    enable_web_search: true  # Optional: Enable web search for Open WebUI (default is true for open-webui provider)
+    # IMPORTANT: This setting sends web_search=true to the Open WebUI API.
+    # For web search to actually work, you MUST:
+    # 1. Enable web search in Open WebUI Admin Settings > Web Search
+    # 2. Configure a search engine (SearXNG, Tavily, Brave, Google PSE, etc)
+    # 3. Set the required API keys for your chosen search engine
+    # If web search is enabled here but not in Open WebUI, the API parameter will be ignored
+
+models:
+  openai/gpt-5:
+    reasoning_effort: high
+    verbosity: medium
+
+  openrouter/x-ai/grok-4-fast:online:
+
+  open-webui/gmail-checker:
+  
+  # Ollama model with tools support
+  # ollama/qwen3:14b:
+  #   tools: ["web_search", "web_fetch", "get_temperature"]  # Optional: enable specific tools
+  #   system_prompt: "You are a helpful AI assistant"  # Optional: model-specific system prompt
+  #   think: true  # Optional: enable thinking mode (supported by reasoning models)
+
+fallback_models:  # Optional: List of models to try if main model fails (in order). Leave empty to disable.
+  # - "ollama/llama2"
+  # - "groq/mixtral"
+
+
+
+# Scheduled tasks (optional)
+scheduled_tasks:
+  # Cron schedule format: minute hour day month day_of_week
+  # Example: "0 9 * * *" = Every day at 9:00 AM
+  # Example: "0 9 * * 1-5" = Mon-Fri at 9:00 AM
+  # For DMs: use "user_id" instead of "channel_id"
+  # Optional: system_prompt overrides the model's or global system prompt for this task.
+
+  # Task 1: Email check to channel
+  email_check:
+    enabled: false
+    cron: "0 9 * * *"  # Every day at 9:00 AM
+    channel_id: 1470406324331483259  # Send to channel
+    model: "open-webui/gmail-checker"
+    fallback_models:  # Optional: Task-specific fallback models, or omit to use global fallback_models
+      - "ollama/llama2"
+    prompt: "Summarize my recent emails"
+    system_prompt: | # optional: task-specific instructions for this job
+      Reply in Traditional Chinese. Focus on major indices and notable movers only.
+  
+  # Task 2: Send DM to user
+  DM_MSG:
+    enabled: false
+    cron: "0 * * * *"  # Every hour
+    user_id: 467935812554850309  # Send DM to this user ID (don't use channel_id)
+    model: "open-webui/llama3.2:1b"
+    fallback_models:  # Optional: Task-specific fallback models
+      - "ollama/llama2"
+    prompt: "how are you? this is a test msg."

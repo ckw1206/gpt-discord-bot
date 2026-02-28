@@ -5,6 +5,7 @@ from datetime import datetime
 import logging
 from typing import Any, Literal, Optional
 import os
+import re
 
 import discord
 from discord.app_commands import Choice
@@ -15,140 +16,83 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import yaml
 
 from services.ollama import OllamaService
+from tools.registry import get_openai_tools
 
-# Enable httpx logging if DEBUG env var is set
 if os.environ.get("DEBUG"):
     logging.basicConfig(level=logging.DEBUG)
-    # Enable httpx debug logging
-    httpx_logger = logging.getLogger("httpx")
-    httpx_logger.setLevel(logging.DEBUG)
+    logging.getLogger("httpx").setLevel(logging.DEBUG)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s: %(message)s",
-)
-
-# Create a separate logger for web search debugging
-web_search_logger = logging.getLogger("web_search")
-web_search_logger.setLevel(logging.DEBUG)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
 VISION_MODEL_TAGS = ("claude", "gemini", "gemma", "gpt-4", "gpt-5", "grok-4", "llama", "llava", "mistral", "o3", "o4", "vision", "vl")
 PROVIDERS_SUPPORTING_USERNAMES = ("openai", "x-ai")
-
 EMBED_COLOR_COMPLETE = discord.Color.dark_green()
 EMBED_COLOR_INCOMPLETE = discord.Color.orange()
-
 STREAMING_INDICATOR = " ⚪"
 EDIT_DELAY_SECONDS = 1
-
 MAX_MESSAGE_NODES = 500
 
 
-def strip_thinking_tags(text: str) -> str:
-    """Remove <think> tags and their content from response text."""
-    import re
-    # Remove <think>...</think> blocks (handles multiline)
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
-    return text.strip()
+def strip_thinking(text: str) -> str:
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
 def get_config(filename: str = "config.yaml") -> dict[str, Any]:
-    with open(filename, encoding="utf-8") as file:
-        config_data = yaml.safe_load(file)
-    
-    # Log the actual loaded config for debugging
-    if logging.getLogger().level <= logging.DEBUG:
-        logging.debug(f"Raw config loaded - Models section: {config_data.get('models', {})}")
-    
-    return config_data
+    with open(filename, encoding="utf-8") as f:
+        return yaml.safe_load(f)
 
 
 def parse_error_message(error: Exception) -> str:
-    """Extract human-readable error message from exception."""
-    error_str = str(error)
-    error_type = type(error).__name__
-    
-    # Rate limit errors
-    if "429" in error_str or error_type == "RateLimitError":
-        # Try to extract the provider's message
-        if "is temporarily rate-limited" in error_str:
-            match = error_str.split("'raw': '")[1].split("'")[0] if "'raw': '" in error_str else None
-            if match:
-                return f"⚠️ Rate Limited: {match}"
+    s, t = str(error), type(error).__name__
+    if "429" in s or t == "RateLimitError":
         return "⚠️ Rate Limited: API provider is temporarily rate-limited. Please retry shortly."
-    
-    # Authentication errors
-    if "401" in error_str or "Unauthorized" in error_str:
+    if "401" in s or "Unauthorized" in s:
         return "❌ Authentication Error: Invalid API key or credentials."
-    
-    # Not found errors
-    if "404" in error_str or error_type == "NotFound":
+    if "404" in s or t == "NotFound":
         return "❌ Not Found: The requested resource was not found."
-    
-    # Forbidden errors
-    if "403" in error_str or error_type == "Forbidden":
+    if "403" in s or t == "Forbidden":
         return "❌ Forbidden: You don't have permission to access this resource."
-    
-    # Connection errors
-    if "Connection" in error_type or "ECONNREFUSED" in error_str or "ETIMEDOUT" in error_str:
-        return "❌ Connection Error: Unable to connect to the API provider. Check your internet or provider status."
-    
-    # Generic fallback - just use error type and first line of message
-    first_line = error_str.split('\n')[0][:100]
-    return f"❌ {error_type}: {first_line}"
+    if "Connection" in t or "ECONNREFUSED" in s or "ETIMEDOUT" in s:
+        return "❌ Connection Error: Unable to connect to the API provider."
+    return f"❌ {t}: {s.split(chr(10))[0][:100]}"
 
 
-async def notify_admin_error(error: Exception, context: str = "") -> None:
-    """Send error notification to all admins via DM."""
-    try:
-        admin_ids = config.get("permissions", {}).get("users", {}).get("admin_ids", [])
-        if not admin_ids:
-            return
-        
-        error_msg = parse_error_message(error)
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        dm_content = f"🤖 **Bot Error Notification**\n"
-        dm_content += f"⏰ Time: {timestamp}\n"
-        dm_content += f"📝 Context: {context}\n\n"
-        dm_content += f"Error: {error_msg}"
-        
-        for admin_id in admin_ids:
-            try:
-                admin_user = discord_bot.get_user(admin_id)
-                if not admin_user:
-                    admin_user = await discord_bot.fetch_user(admin_id)
-                
-                await admin_user.send(dm_content)
-            except (discord.NotFound, discord.Forbidden):
-                logging.warning(f"Could not send error notification to admin {admin_id}")
-            except Exception as e:
-                logging.warning(f"Failed to notify admin {admin_id}: {e}")
-    except Exception as e:
-        logging.warning(f"Failed to notify admins of error: {e}")
+def format_system_prompt(prompt: str, accept_usernames: bool) -> str:
+    now = datetime.now().astimezone()
+    prompt = prompt.replace("{date}", now.strftime("%B %d %Y")).replace("{time}", now.strftime("%H:%M:%S %Z%z")).strip()
+    if accept_usernames:
+        prompt += "\n\nUser's names are their Discord IDs and should be typed as '<@ID>'."
+    return prompt
+
+
+def build_openai_client(provider_cfg: dict) -> AsyncOpenAI:
+    return AsyncOpenAI(base_url=provider_cfg["base_url"], api_key=provider_cfg.get("api_key", "sk-no-key-required"))
+
+
+def build_extra_body(provider_cfg: dict, model_params: Any, exclude: set[str] | None = None) -> dict | None:
+    """Merge provider extra_body with model params. Optionally exclude keys (e.g. 'tools', 'system_prompt') that are handled separately."""
+    base = provider_cfg.get("extra_body") or {}
+    params = model_params if isinstance(model_params, dict) else {}
+    if exclude:
+        params = {k: v for k, v in params.items() if k not in exclude}
+    merged = base | params
+    return merged if merged else None
 
 
 config = get_config()
 curr_model = next(iter(config["models"]))
 
-logging.info(f"🚀 Bot starting with config loaded")
-logging.info(f"📋 Available models in config: {list(config.get('models', {}).keys())}")
-logging.info(f"📋 Default curr_model set to: {curr_model}")
-logging.info(f"📋 All providers in config: {list(config.get('providers', {}).keys())}")
-
-
+logging.info(f"🚀 Bot starting | models: {list(config['models'].keys())} | providers: {list(config['providers'].keys())}")
 
 msg_nodes = {}
 last_task_time = 0
-
 scheduler = AsyncIOScheduler()
 
 intents = discord.Intents.default()
 intents.message_content = True
-intents.dm_messages = True  # Allow sending DMs to users
+intents.dm_messages = True
 activity = discord.CustomActivity(name=(config.get("status_message") or "github.com/jakobdylanc/llmcord")[:128])
 discord_bot = commands.Bot(intents=intents, activity=activity, command_prefix=None)
-
 httpx_client = httpx.AsyncClient()
 
 
@@ -156,45 +100,86 @@ httpx_client = httpx.AsyncClient()
 class MsgNode:
     text: Optional[str] = None
     images: list[dict[str, Any]] = field(default_factory=list)
-
     role: Literal["user", "assistant"] = "assistant"
     user_id: Optional[int] = None
-
     has_bad_attachments: bool = False
     fetch_parent_failed: bool = False
-
     parent_msg: Optional[discord.Message] = None
-
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
+
+async def notify_admin_error(error: Exception, context: str = "") -> None:
+    try:
+        admin_ids = config.get("permissions", {}).get("users", {}).get("admin_ids", [])
+        if not admin_ids:
+            return
+        msg = (
+            f"🤖 **Bot Error Notification**\n"
+            f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"📝 Context: {context}\n\nError: {parse_error_message(error)}"
+        )
+        for admin_id in admin_ids:
+            try:
+                user = discord_bot.get_user(admin_id) or await discord_bot.fetch_user(admin_id)
+                await user.send(msg)
+            except Exception as e:
+                logging.warning(f"Could not notify admin {admin_id}: {e}")
+    except Exception as e:
+        logging.warning(f"Failed to notify admins: {e}")
+
+
+async def run_ollama(provider_cfg: dict, model: str, model_params: Any, messages: list) -> dict:
+    ollama_service = OllamaService(host=provider_cfg["base_url"])
+    tools = (model_params or {}).get("tools", []) if isinstance(model_params, dict) else []
+    think = (model_params or {}).get("think", False) if isinstance(model_params, dict) else False
+    # OllamaService.run expects enable_tools= (same as test_ollama); keep only role/content for Ollama API
+    ollama_messages = []
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, list):
+            content = " ".join(c.get("text", "") for c in content if c.get("type") == "text")
+        ollama_messages.append({"role": m["role"], "content": content or ""})
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None,
+        lambda: ollama_service.run(ollama_messages, model, enable_tools=tools, think=think),
+    )
+
+
+async def stream_openai(client: AsyncOpenAI, model: str, messages: list, **kwargs) -> list[str]:
+    chunks = []
+    async for chunk in await client.chat.completions.create(model=model, messages=messages, stream=True, **kwargs):
+        if choice := (chunk.choices[0] if chunk.choices else None):
+            if choice.finish_reason:
+                chunks.append(choice.delta.content or "")
+                break
+            chunks.append(choice.delta.content or "")
+    return chunks
+
+
+# ── Slash commands ──────────────────────────────────────────────────────────
 
 @discord_bot.tree.command(name="model", description="View or switch the current model")
 async def model_command(interaction: discord.Interaction, model: str) -> None:
     global curr_model
-
     if model == curr_model:
-        output = f"Current model: `{curr_model}`"
+        out = f"Current model: `{curr_model}`"
+    elif interaction.user.id in config["permissions"]["users"]["admin_ids"]:
+        curr_model = model
+        out = f"Model switched to: `{model}`"
+        logging.info(out)
     else:
-        if user_is_admin := interaction.user.id in config["permissions"]["users"]["admin_ids"]:
-            curr_model = model
-            output = f"Model switched to: `{model}`"
-            logging.info(output)
-        else:
-            output = "You don't have permission to change the model."
-
-    await interaction.response.send_message(output, ephemeral=(interaction.channel.type == discord.ChannelType.private))
+        out = "You don't have permission to change the model."
+    await interaction.response.send_message(out, ephemeral=(interaction.channel.type == discord.ChannelType.private))
 
 
 @model_command.autocomplete("model")
 async def model_autocomplete(interaction: discord.Interaction, curr_str: str) -> list[Choice[str]]:
     global config
-
     if curr_str == "":
         config = await asyncio.to_thread(get_config)
-
     choices = [Choice(name=f"◉ {curr_model} (current)", value=curr_model)] if curr_str.lower() in curr_model.lower() else []
-    choices += [Choice(name=f"○ {model}", value=model) for model in config["models"] if model != curr_model and curr_str.lower() in model.lower()]
-
+    choices += [Choice(name=f"○ {m}", value=m) for m in config["models"] if m != curr_model and curr_str.lower() in m.lower()]
     return choices[:25]
 
 
@@ -202,20 +187,18 @@ async def model_autocomplete(interaction: discord.Interaction, curr_str: str) ->
 async def clear_command(interaction: discord.Interaction) -> None:
     global msg_nodes
     msg_nodes.clear()
-    output = "✅ Conversation history cleared. Starting fresh!"
-    await interaction.response.send_message(output, ephemeral=(interaction.channel.type == discord.ChannelType.private))
-    logging.info(f"Message cache cleared by user {interaction.user.id}")
+    await interaction.response.send_message("✅ Conversation history cleared. Starting fresh!", ephemeral=(interaction.channel.type == discord.ChannelType.private))
+    logging.info(f"Cache cleared by {interaction.user.id}")
 
+
+# ── Events ───────────────────────────────────────────────────────────────────
 
 @discord_bot.event
 async def on_ready() -> None:
     if client_id := config.get("client_id"):
         logging.info(f"\n\nBOT INVITE URL:\nhttps://discord.com/oauth2/authorize?client_id={client_id}&permissions=412317191168&scope=bot\n")
-
     await discord_bot.tree.sync()
     logging.info(f"Synced {len(discord_bot.tree._get_all_commands())} slash commands")
-    
-    # Start scheduler for periodic tasks
     if not scheduler.running:
         scheduler.start()
         setup_scheduled_tasks()
@@ -227,7 +210,6 @@ async def on_message(new_msg: discord.Message) -> None:
     global last_task_time
 
     is_dm = new_msg.channel.type == discord.ChannelType.private
-
     if (not is_dm and discord_bot.user not in new_msg.mentions) or new_msg.author.bot:
         return
 
@@ -235,766 +217,443 @@ async def on_message(new_msg: discord.Message) -> None:
     channel_ids = set(filter(None, (new_msg.channel.id, getattr(new_msg.channel, "parent_id", None), getattr(new_msg.channel, "category_id", None))))
 
     config = await asyncio.to_thread(get_config)
+    perms = config["permissions"]
+    user_is_admin = new_msg.author.id in perms["users"]["admin_ids"]
 
-    allow_dms = config.get("allow_dms", True)
-
-    permissions = config["permissions"]
-
-    user_is_admin = new_msg.author.id in permissions["users"]["admin_ids"]
-
-    (allowed_user_ids, blocked_user_ids), (allowed_role_ids, blocked_role_ids), (allowed_channel_ids, blocked_channel_ids) = (
-        (perm["allowed_ids"], perm["blocked_ids"]) for perm in (permissions["users"], permissions["roles"], permissions["channels"])
+    (allowed_uids, blocked_uids), (allowed_rids, blocked_rids), (allowed_cids, blocked_cids) = (
+        (p["allowed_ids"], p["blocked_ids"]) for p in (perms["users"], perms["roles"], perms["channels"])
     )
 
-    allow_all_users = not allowed_user_ids if is_dm else not allowed_user_ids and not allowed_role_ids
-    is_good_user = user_is_admin or allow_all_users or new_msg.author.id in allowed_user_ids or any(id in allowed_role_ids for id in role_ids)
-    is_bad_user = not is_good_user or new_msg.author.id in blocked_user_ids or any(id in blocked_role_ids for id in role_ids)
+    allow_all_users = not allowed_uids if is_dm else not allowed_uids and not allowed_rids
+    is_good_user = user_is_admin or allow_all_users or new_msg.author.id in allowed_uids or any(i in allowed_rids for i in role_ids)
+    is_bad_user = not is_good_user or new_msg.author.id in blocked_uids or any(i in blocked_rids for i in role_ids)
 
-    allow_all_channels = not allowed_channel_ids
-    is_good_channel = user_is_admin or allow_dms if is_dm else allow_all_channels or any(id in allowed_channel_ids for id in channel_ids)
-    is_bad_channel = not is_good_channel or any(id in blocked_channel_ids for id in channel_ids)
+    allow_all_channels = not allowed_cids
+    is_good_channel = user_is_admin or config.get("allow_dms", True) if is_dm else allow_all_channels or any(i in allowed_cids for i in channel_ids)
+    is_bad_channel = not is_good_channel or any(i in blocked_cids for i in channel_ids)
 
     if is_bad_user or is_bad_channel:
         return
 
     provider_slash_model = curr_model
     provider, model = provider_slash_model.removesuffix(":vision").split("/", 1)
+    provider_cfg = config["providers"][provider]
+    model_params = config["models"].get(provider_slash_model)
 
-    logging.info(f"━━━ Discord Message Handler ━━━")
-    logging.info(f"Using model: {provider_slash_model}")
-    
-    provider_config = config["providers"][provider]
-    model_parameters = config["models"].get(provider_slash_model, None)
-    
-    logging.info(f"Model '{provider_slash_model}' exists in config.models: {provider_slash_model in config.get('models', {})}")
-    logging.info(f"Model parameters from config: {model_parameters}")
+    logging.info(f"━━━ {provider_slash_model} | params: {model_params}")
 
     accept_images = any(x in provider_slash_model.lower() for x in VISION_MODEL_TAGS)
     accept_usernames = any(provider_slash_model.lower().startswith(x) for x in PROVIDERS_SUPPORTING_USERNAMES)
-
     max_text = config.get("max_text", 100000)
     max_images = config.get("max_images", 5) if accept_images else 0
     max_messages = config.get("max_messages", 25)
 
-    # Build message chain and set user warnings
-    messages = []
-    user_warnings = set()
-    curr_msg = new_msg
-
-    while curr_msg != None and len(messages) < max_messages:
+    # Build message chain
+    messages, user_warnings, curr_msg = [], set(), new_msg
+    while curr_msg and len(messages) < max_messages:
         curr_node = msg_nodes.setdefault(curr_msg.id, MsgNode())
-
         async with curr_node.lock:
-            if curr_node.text == None:
-                cleaned_content = curr_msg.content.removeprefix(discord_bot.user.mention).lstrip()
-
-                good_attachments = [att for att in curr_msg.attachments if att.content_type and any(att.content_type.startswith(x) for x in ("text", "image"))]
-
-                attachment_responses = await asyncio.gather(*[httpx_client.get(att.url) for att in good_attachments])
+            if curr_node.text is None:
+                cleaned = curr_msg.content.removeprefix(discord_bot.user.mention).lstrip()
+                good_att = [a for a in curr_msg.attachments if a.content_type and any(a.content_type.startswith(x) for x in ("text", "image"))]
+                att_resps = await asyncio.gather(*[httpx_client.get(a.url) for a in good_att])
 
                 curr_node.text = "\n".join(
-                    ([cleaned_content] if cleaned_content else [])
-                    + ["\n".join(filter(None, (embed.title, embed.description, embed.footer.text))) for embed in curr_msg.embeds]
-                    + [component.content for component in curr_msg.components if component.type == discord.ComponentType.text_display]
-                    + [resp.text for att, resp in zip(good_attachments, attachment_responses) if att.content_type.startswith("text")]
+                    ([cleaned] if cleaned else [])
+                    + ["\n".join(filter(None, (e.title, e.description, e.footer.text))) for e in curr_msg.embeds]
+                    + [c.content for c in curr_msg.components if c.type == discord.ComponentType.text_display]
+                    + [r.text for a, r in zip(good_att, att_resps) if a.content_type.startswith("text")]
                 )
-
                 curr_node.images = [
-                    dict(type="image_url", image_url=dict(url=f"data:{att.content_type};base64,{b64encode(resp.content).decode('utf-8')}"))
-                    for att, resp in zip(good_attachments, attachment_responses)
-                    if att.content_type.startswith("image")
+                    dict(type="image_url", image_url=dict(url=f"data:{a.content_type};base64,{b64encode(r.content).decode()}"))
+                    for a, r in zip(good_att, att_resps) if a.content_type.startswith("image")
                 ]
-
                 curr_node.role = "assistant" if curr_msg.author == discord_bot.user else "user"
-
                 curr_node.user_id = curr_msg.author.id if curr_node.role == "user" else None
-
-                curr_node.has_bad_attachments = len(curr_msg.attachments) > len(good_attachments)
+                curr_node.has_bad_attachments = len(curr_msg.attachments) > len(good_att)
 
                 try:
                     if (
-                        curr_msg.reference == None
+                        curr_msg.reference is None
                         and discord_bot.user.mention not in curr_msg.content
-                        and (prev_msg_in_channel := ([m async for m in curr_msg.channel.history(before=curr_msg, limit=1)] or [None])[0])
-                        and prev_msg_in_channel.type in (discord.MessageType.default, discord.MessageType.reply)
-                        and prev_msg_in_channel.author == (discord_bot.user if curr_msg.channel.type == discord.ChannelType.private else curr_msg.author)
+                        and (prev := ([m async for m in curr_msg.channel.history(before=curr_msg, limit=1)] or [None])[0])
+                        and prev.type in (discord.MessageType.default, discord.MessageType.reply)
+                        and prev.author == (discord_bot.user if is_dm else curr_msg.author)
                     ):
-                        curr_node.parent_msg = prev_msg_in_channel
+                        curr_node.parent_msg = prev
                     else:
-                        is_public_thread = curr_msg.channel.type == discord.ChannelType.public_thread
-                        parent_is_thread_start = is_public_thread and curr_msg.reference == None and curr_msg.channel.parent.type == discord.ChannelType.text
-
-                        if parent_msg_id := curr_msg.channel.id if parent_is_thread_start else getattr(curr_msg.reference, "message_id", None):
-                            if parent_is_thread_start:
-                                curr_node.parent_msg = curr_msg.channel.starter_message or await curr_msg.channel.parent.fetch_message(parent_msg_id)
-                            else:
-                                curr_node.parent_msg = curr_msg.reference.cached_message or await curr_msg.channel.fetch_message(parent_msg_id)
-
+                        is_thread = curr_msg.channel.type == discord.ChannelType.public_thread
+                        is_thread_start = is_thread and curr_msg.reference is None and curr_msg.channel.parent.type == discord.ChannelType.text
+                        if pid := curr_msg.channel.id if is_thread_start else getattr(curr_msg.reference, "message_id", None):
+                            curr_node.parent_msg = (
+                                curr_msg.channel.starter_message or await curr_msg.channel.parent.fetch_message(pid)
+                            ) if is_thread_start else (
+                                curr_msg.reference.cached_message or await curr_msg.channel.fetch_message(pid)
+                            )
                 except (discord.NotFound, discord.HTTPException):
-                    logging.exception("Error fetching next message in the chain")
+                    logging.exception("Error fetching parent message")
                     curr_node.fetch_parent_failed = True
 
-            if curr_node.images[:max_images]:
-                content = ([dict(type="text", text=curr_node.text[:max_text])] if curr_node.text[:max_text] else []) + curr_node.images[:max_images]
-            else:
-                content = curr_node.text[:max_text]
-
+            content = (
+                ([dict(type="text", text=curr_node.text[:max_text])] if curr_node.text[:max_text] else []) + curr_node.images[:max_images]
+                if curr_node.images[:max_images] else curr_node.text[:max_text]
+            )
             if content != "":
-                message = dict(content=content, role=curr_node.role)
-                if accept_usernames and curr_node.user_id != None:
-                    message["name"] = str(curr_node.user_id)
+                msg = dict(content=content, role=curr_node.role)
+                if accept_usernames and curr_node.user_id:
+                    msg["name"] = str(curr_node.user_id)
+                messages.append(msg)
 
-                messages.append(message)
-
-            if len(curr_node.text) > max_text:
-                user_warnings.add(f"⚠️ Max {max_text:,} characters per message")
-            if len(curr_node.images) > max_images:
-                user_warnings.add(f"⚠️ Max {max_images} image{'' if max_images == 1 else 's'} per message" if max_images > 0 else "⚠️ Can't see images")
-            if curr_node.has_bad_attachments:
-                user_warnings.add("⚠️ Unsupported attachments")
-            if curr_node.fetch_parent_failed or (curr_node.parent_msg != None and len(messages) == max_messages):
-                user_warnings.add(f"⚠️ Only using last {len(messages)} message{'' if len(messages) == 1 else 's'}")
-
+            if len(curr_node.text) > max_text: user_warnings.add(f"⚠️ Max {max_text:,} characters per message")
+            if len(curr_node.images) > max_images: user_warnings.add(f"⚠️ Max {max_images} image{'s' if max_images != 1 else ''} per message" if max_images > 0 else "⚠️ Can't see images")
+            if curr_node.has_bad_attachments: user_warnings.add("⚠️ Unsupported attachments")
+            if curr_node.fetch_parent_failed or (curr_node.parent_msg and len(messages) == max_messages):
+                user_warnings.add(f"⚠️ Only using last {len(messages)} message{'s' if len(messages) != 1 else ''}")
             curr_msg = curr_node.parent_msg
 
-    logging.info(f"Message received (user ID: {new_msg.author.id}, attachments: {len(new_msg.attachments)}, conversation length: {len(messages)}):\n{new_msg.content}")
-    logging.debug(f"Provider: {provider}, Model: {model}, Web Search Enabled: {provider_config.get('enable_web_search', provider == 'open-webui')}")
+    logging.info(f"Message (uid:{new_msg.author.id}, att:{len(new_msg.attachments)}, len:{len(messages)}): {new_msg.content}")
 
-    # Get system prompt from model config or global config
-    model_system_prompt = None
-    if model_parameters and isinstance(model_parameters, dict):
-        model_system_prompt = model_parameters.get("system_prompt")
-    
-    final_system_prompt = model_system_prompt or config.get("system_prompt")
-    
-    if final_system_prompt:
-        now = datetime.now().astimezone()
-        final_system_prompt = final_system_prompt.replace("{date}", now.strftime("%B %d %Y")).replace("{time}", now.strftime("%H:%M:%S %Z%z")).strip()
-        if accept_usernames:
-            final_system_prompt += "\n\nUser's names are their Discord IDs and should be typed as '<@ID>'."
+    # System prompt
+    sys_prompt = (isinstance(model_params, dict) and model_params.get("system_prompt")) or config.get("system_prompt")
+    if sys_prompt:
+        sys_prompt = format_system_prompt(sys_prompt, accept_usernames)
 
-    # Prepare messages for API (content-text only for compatibility)
+    # Build API messages
     api_messages = []
-    for msg in messages[::-1]:
-        if isinstance(msg.get("content"), list):
-            # Extract text from complex content
-            text_parts = [c.get("text", "") for c in msg["content"] if c.get("type") == "text"]
-            api_messages.append({"role": msg["role"], "content": " ".join(text_parts)})
+    for m in messages[::-1]:
+        if isinstance(m.get("content"), list):
+            api_messages.append({"role": m["role"], "content": " ".join(c.get("text", "") for c in m["content"] if c.get("type") == "text")})
         else:
-            api_messages.append(msg)
-    
-    if final_system_prompt:
-        api_messages.append({"role": "system", "content": final_system_prompt})
+            api_messages.append(m)
+    if sys_prompt:
+        api_messages.insert(0, {"role": "system", "content": sys_prompt})
 
-    # Generate and send response message(s) (can be multiple if response is long)
+    # Response state
     curr_content = finish_reason = None
-    response_msgs = []
-    response_contents = []
+    response_msgs, response_contents = [], []
+    use_plain = config.get("use_plain_responses", False)
+    show_color = config.get("show_embed_color", True)
+    max_len = 2000 if use_plain else 4096 - len(STREAMING_INDICATOR)
 
-    show_embed_color = config.get("show_embed_color", True)
-    if use_plain_responses := config.get("use_plain_responses", False):
-        max_message_length = 4000
-    else:
-        max_message_length = 4096 - len(STREAMING_INDICATOR)
-        embed = discord.Embed.from_dict(dict(fields=[dict(name=warning, value="", inline=False) for warning in sorted(user_warnings)]))
-        if not show_embed_color:
+    if not use_plain:
+        embed = discord.Embed.from_dict(dict(fields=[dict(name=w, value="", inline=False) for w in sorted(user_warnings)]))
+        if not show_color:
             embed.color = None
 
-    async def reply_helper(**reply_kwargs) -> None:
-        reply_target = new_msg if not response_msgs else response_msgs[-1]
-        response_msg = await reply_target.reply(**reply_kwargs)
-        response_msgs.append(response_msg)
+    async def reply_helper(**kw) -> None:
+        target = new_msg if not response_msgs else response_msgs[-1]
+        msg = await target.reply(**kw)
+        response_msgs.append(msg)
+        msg_nodes[msg.id] = MsgNode(parent_msg=new_msg)
+        await msg_nodes[msg.id].lock.acquire()
 
-        msg_nodes[response_msg.id] = MsgNode(parent_msg=new_msg)
-        await msg_nodes[response_msg.id].lock.acquire()
-
-    model_used = provider_slash_model
-    fallback_attempted = False
-    
-    # Check if this is an Ollama provider
-    is_ollama_provider = provider == "ollama"
-    
     try:
-        if is_ollama_provider:
-            # Use OllamaService for ollama provider
-            logging.info(f"Using OllamaService for {provider}/{model}")
-            
-            ollama_host = provider_config["base_url"]
-            ollama_service = OllamaService(host=ollama_host)
-            
-            # Get tools from model config
-            tools_enabled = []
-            if model_parameters and isinstance(model_parameters, dict):
-                tools_enabled = model_parameters.get("tools", [])
-                think_enabled = model_parameters.get("think", False)
+        if provider == "ollama":
+            async with new_msg.channel.typing():
+                result = await run_ollama(provider_cfg, model, model_params, api_messages)
+            text = strip_thinking(result.get("content", ""))
+            response_contents = [text[i:i+max_len] for i in range(0, len(text), max_len)] if text else []
+
+            if use_plain:
+                for chunk in response_contents:
+                    if c := strip_thinking(chunk): await reply_helper(content=c)
             else:
-                think_enabled = False
-            
-            logging.info(f"Ollama config - Tools: {tools_enabled}, Thinking: {think_enabled}")
-            
-            async with new_msg.channel.typing():
-                # Run OllamaService in thread pool
-                loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(
-                    None,
-                    ollama_service.run,
-                    api_messages,
-                    model,
-                    tools_enabled,
-                    think_enabled
-                )
-                
-                ollama_response = result.get("content", "")
-                tool_results = result.get("tool_results", [])
-                
-                # Strip thinking tags
-                ollama_response = strip_thinking_tags(ollama_response)
-                
-                if tool_results:
-                    logging.info(f"Tool results: {len(tool_results)} tools executed")
-                    ollama_response += "\n\n**Tool Results:**\n" + "\n".join(tool_results)
-                
-                # Split response into chunks if needed
-                if ollama_response:
-                    for i in range(0, len(ollama_response), max_message_length):
-                        chunk = ollama_response[i:i+max_message_length]
-                        response_contents.append(chunk)
-                
-                # Display responses
-                if use_plain_responses:
-                    for content in response_contents:
-                        clean_content = strip_thinking_tags(content)
-                        if clean_content:
-                            await reply_helper(content=clean_content)
-                else:
-                    if not response_contents:
-                        response_contents.append("(No response)")
-                    
-                    for idx, content in enumerate(response_contents):
-                        if idx == 0 and len(response_contents) == 1:
-                            embed.description = strip_thinking_tags(content)
-                            if show_embed_color:
-                                embed.color = EMBED_COLOR_COMPLETE
-                            await reply_helper(embed=embed)
-                        elif idx == 0:
-                            first_embed = discord.Embed.from_dict(dict(fields=[dict(name=warning, value="", inline=False) for warning in sorted(user_warnings)]))
-                            first_embed.description = strip_thinking_tags(content)
-                            if show_embed_color:
-                                first_embed.color = EMBED_COLOR_COMPLETE
-                            await reply_helper(embed=first_embed)
-                        else:
-                            await reply_helper(content=strip_thinking_tags(content))
-        
+                if not response_contents: response_contents = ["(No response)"]
+                for idx, chunk in enumerate(response_contents):
+                    if idx == 0:
+                        e = embed if len(response_contents) == 1 else discord.Embed.from_dict(dict(fields=[dict(name=w, value="", inline=False) for w in sorted(user_warnings)]))
+                        e.description = strip_thinking(chunk)
+                        if show_color: e.color = EMBED_COLOR_COMPLETE
+                        await reply_helper(embed=e)
+                    else:
+                        await reply_helper(content=strip_thinking(chunk))
+
         else:
-            # Use AsyncOpenAI for other providers
-            logging.info(f"Using AsyncOpenAI for {provider}/{model}")
-            
-            base_url = provider_config["base_url"]
-            api_key = provider_config.get("api_key", "sk-no-key-required")
-            openai_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+            client = build_openai_client(provider_cfg)
+            # OpenAI/OpenRouter expect tools as list of {type, function: {name, description, parameters}}; don't put tools/system_prompt in extra_body
+            api_tools = get_openai_tools((model_params or {}).get("tools") if isinstance(model_params, dict) else None)
+            extra_body = build_extra_body(
+                provider_cfg, model_params, exclude={"tools", "system_prompt"}
+            )
+            extra_headers = provider_cfg.get("extra_headers")
+            extra_query = provider_cfg.get("extra_query")
 
-            extra_headers = provider_config.get("extra_headers")
-            extra_query = provider_config.get("extra_query")
-            
-            # Build extra_body from provider and model config
-            extra_body = (provider_config.get("extra_body") or {}) | (model_parameters or {}) or None
-            
-            openai_kwargs = dict(model=model, messages=api_messages, stream=True, extra_headers=extra_headers, extra_query=extra_query, extra_body=extra_body)
-            
             async with new_msg.channel.typing():
-                response_started = False
-                async for chunk in await openai_client.chat.completions.create(
-                    model=openai_kwargs['model'],
-                    messages=openai_kwargs['messages'],
-                    stream=openai_kwargs['stream'],
-                    extra_headers=openai_kwargs['extra_headers'],
-                    extra_query=openai_kwargs['extra_query'],
-                    extra_body=openai_kwargs['extra_body']
-                ):
-                    if not response_started:
-                        logging.info(f"✓ Got response from API. First chunk received. Usage info available: {hasattr(chunk, 'usage')}")
-                        response_started = True
-                        if hasattr(chunk, 'usage') and chunk.usage:
-                            logging.info(f"Token usage: prompt={chunk.usage.prompt_tokens}, completion={chunk.usage.completion_tokens}")
-                    
-                    if finish_reason != None:
-                        break
-
-                    if not (choice := chunk.choices[0] if chunk.choices else None):
-                        continue
-
+                create_kw: dict = dict(
+                    model=model, messages=api_messages, stream=True,
+                    extra_headers=extra_headers, extra_query=extra_query, extra_body=extra_body
+                )
+                if api_tools:
+                    create_kw["tools"] = api_tools
+                async for chunk in await client.chat.completions.create(**create_kw):
+                    if finish_reason: break
+                    choice = chunk.choices[0] if chunk.choices else None
+                    if not choice: continue
                     finish_reason = choice.finish_reason
+                    prev, curr_content = curr_content or "", choice.delta.content or ""
+                    new_content = prev if not finish_reason else prev + curr_content
+                    if not response_contents and not new_content: continue
 
-                    prev_content = curr_content or ""
-                    curr_content = choice.delta.content or ""
-
-                    new_content = prev_content if finish_reason == None else (prev_content + curr_content)
-
-                    if response_contents == [] and new_content == "":
-                        continue
-
-                    if start_next_msg := response_contents == [] or len(response_contents[-1] + new_content) > max_message_length:
+                    if start_next := not response_contents or len(response_contents[-1] + new_content) > max_len:
                         response_contents.append("")
-
                     response_contents[-1] += new_content
 
-                    if not use_plain_responses:
-                        time_delta = datetime.now().timestamp() - last_task_time
+                    if not use_plain:
+                        td = datetime.now().timestamp() - last_task_time
+                        split_incoming = not finish_reason and len(response_contents[-1] + curr_content) > max_len
+                        is_final = finish_reason or split_incoming
+                        is_good = finish_reason and finish_reason.lower() in ("stop", "end_turn")
 
-                        ready_to_edit = time_delta >= EDIT_DELAY_SECONDS
-                        msg_split_incoming = finish_reason == None and len(response_contents[-1] + curr_content) > max_message_length
-                        is_final_edit = finish_reason != None or msg_split_incoming
-                        is_good_finish = finish_reason != None and finish_reason.lower() in ("stop", "end_turn")
-
-                        if start_next_msg or ready_to_edit or is_final_edit:
-                            # Strip thinking tags before displaying
-                            display_content = strip_thinking_tags(response_contents[-1]) if is_final_edit else (response_contents[-1] + STREAMING_INDICATOR)
-                            embed.description = display_content
-                            
-                            if show_embed_color:
-                                embed.color = EMBED_COLOR_COMPLETE if msg_split_incoming or is_good_finish else EMBED_COLOR_INCOMPLETE
-
-                            if start_next_msg:
+                        if start_next or td >= EDIT_DELAY_SECONDS or is_final:
+                            embed.description = strip_thinking(response_contents[-1]) if is_final else response_contents[-1] + STREAMING_INDICATOR
+                            if show_color: embed.color = EMBED_COLOR_COMPLETE if split_incoming or is_good else EMBED_COLOR_INCOMPLETE
+                            if start_next:
                                 await reply_helper(embed=embed, silent=True)
                             else:
-                                await asyncio.sleep(EDIT_DELAY_SECONDS - time_delta)
+                                await asyncio.sleep(EDIT_DELAY_SECONDS - td)
                                 await response_msgs[-1].edit(embed=embed)
-
                             last_task_time = datetime.now().timestamp()
 
-            if use_plain_responses:
-                for content in response_contents:
-                    # Strip thinking tags from plain responses
-                    clean_content = strip_thinking_tags(content)
-                    if clean_content:
-                        await reply_helper(content=clean_content)
+            if use_plain:
+                for chunk in response_contents:
+                    if c := strip_thinking(chunk): await reply_helper(content=c)
 
     except Exception as e:
-        # Try fallback models if configured
-        fallback_models = config.get("fallback_models", []) or []
-        if fallback_models and not fallback_attempted:
-            for fallback_idx, fallback_model in enumerate(fallback_models):
-                if not fallback_model or not fallback_model.strip():
-                    continue
-                    
-                fallback_attempted = True
-                logging.warning(f"Primary model '{provider_slash_model}' failed: {parse_error_message(e)}. Attempting fallback [{fallback_idx + 1}/{len(fallback_models)}]: {fallback_model}")
-                
+        fallbacks = config.get("fallback_models", []) or []
+        if fallbacks:
+            for fi, fb_model in enumerate(fallbacks):
+                if not fb_model or not fb_model.strip(): continue
+                logging.warning(f"Primary failed: {parse_error_message(e)}. Trying fallback [{fi+1}/{len(fallbacks)}]: {fb_model}")
                 try:
-                    # Setup fallback client
-                    fallback_provider, fallback_model_name = fallback_model.removesuffix(":vision").split("/", 1)
-                    fallback_provider_config = config["providers"][fallback_provider]
-                    fallback_openai_client = AsyncOpenAI(
-                        base_url=fallback_provider_config["base_url"],
-                        api_key=fallback_provider_config.get("api_key", "sk-no-key-required")
-                    )
-                    
-                    fallback_model_params = config["models"].get(fallback_model, None)
-                    fallback_extra_headers = fallback_provider_config.get("extra_headers")
-                    fallback_extra_query = fallback_provider_config.get("extra_query")
-                    fallback_extra_body = (fallback_provider_config.get("extra_body") or {}) | (fallback_model_params or {}) or None
-                    
-                    # Reset for fallback attempt
+                    fb_provider, fb_model_name = fb_model.removesuffix(":vision").split("/", 1)
+                    fb_cfg = config["providers"][fb_provider]
+                    fb_client = build_openai_client(fb_cfg)
+                    fb_params = config["models"].get(fb_model)
+                    fb_extra_body = build_extra_body(fb_cfg, fb_params, exclude={"tools", "system_prompt"})
+                    fb_tools = get_openai_tools((fb_params or {}).get("tools") if isinstance(fb_params, dict) else None)
                     curr_content = finish_reason = None
                     response_contents = []
-                    
-                    fallback_kwargs = dict(
-                        model=fallback_model_name,
-                        messages=messages[::-1],
-                        stream=True,
-                        extra_headers=fallback_extra_headers,
-                        extra_query=fallback_extra_query,
-                        extra_body=fallback_extra_body
-                    )
-                    logging.info(f"Fallback chat request. Model: {fallback_model_name}, Base URL: {fallback_provider_config['base_url']}, Web Search: {'web_search' in (fallback_extra_body or {})}")
+
                     async with new_msg.channel.typing():
-                        async for chunk in await fallback_openai_client.chat.completions.create(**fallback_kwargs):
-                            if finish_reason != None:
-                                break
-
-                            if not (choice := chunk.choices[0] if chunk.choices else None):
-                                continue
-
+                        fb_create_kw = dict(
+                            model=fb_model_name, messages=api_messages, stream=True,
+                            extra_headers=fb_cfg.get("extra_headers"), extra_query=fb_cfg.get("extra_query"), extra_body=fb_extra_body
+                        )
+                        if fb_tools:
+                            fb_create_kw["tools"] = fb_tools
+                        async for chunk in await fb_client.chat.completions.create(**fb_create_kw):
+                            if finish_reason: break
+                            choice = chunk.choices[0] if chunk.choices else None
+                            if not choice: continue
                             finish_reason = choice.finish_reason
-                            prev_content = curr_content or ""
-                            curr_content = choice.delta.content or ""
-                            new_content = prev_content if finish_reason == None else (prev_content + curr_content)
-
-                            if response_contents == [] and new_content == "":
-                                continue
-
-                            if start_next_msg := response_contents == [] or len(response_contents[-1] + new_content) > max_message_length:
+                            prev, curr_content = curr_content or "", choice.delta.content or ""
+                            new_content = prev if not finish_reason else prev + curr_content
+                            if not response_contents and not new_content: continue
+                            if start_next := not response_contents or len(response_contents[-1] + new_content) > max_len:
                                 response_contents.append("")
-
                             response_contents[-1] += new_content
-
-                            if not use_plain_responses:
-                                time_delta = datetime.now().timestamp() - last_task_time
-                                ready_to_edit = time_delta >= EDIT_DELAY_SECONDS
-                                msg_split_incoming = finish_reason == None and len(response_contents[-1] + curr_content) > max_message_length
-                                is_final_edit = finish_reason != None or msg_split_incoming
-                                is_good_finish = finish_reason != None and finish_reason.lower() in ("stop", "end_turn")
-
-                                if start_next_msg or ready_to_edit or is_final_edit:
-                                    display_content = strip_thinking_tags(response_contents[-1]) if is_final_edit else (response_contents[-1] + STREAMING_INDICATOR)
-                                    embed.description = display_content
-                                    
-                                    if show_embed_color:
-                                        embed.color = EMBED_COLOR_COMPLETE if msg_split_incoming or is_good_finish else EMBED_COLOR_INCOMPLETE
-
-                                    if start_next_msg:
-                                        await reply_helper(embed=embed, silent=True)
+                            if not use_plain:
+                                td = datetime.now().timestamp() - last_task_time
+                                split_incoming = not finish_reason and len(response_contents[-1] + curr_content) > max_len
+                                is_final = finish_reason or split_incoming
+                                is_good = finish_reason and finish_reason.lower() in ("stop", "end_turn")
+                                if start_next or td >= EDIT_DELAY_SECONDS or is_final:
+                                    embed.description = strip_thinking(response_contents[-1]) if is_final else response_contents[-1] + STREAMING_INDICATOR
+                                    if show_color: embed.color = EMBED_COLOR_COMPLETE if split_incoming or is_good else EMBED_COLOR_INCOMPLETE
+                                    if start_next: await reply_helper(embed=embed, silent=True)
                                     else:
-                                        await asyncio.sleep(EDIT_DELAY_SECONDS - time_delta)
+                                        await asyncio.sleep(EDIT_DELAY_SECONDS - td)
                                         await response_msgs[-1].edit(embed=embed)
-
                                     last_task_time = datetime.now().timestamp()
-
-                        if use_plain_responses:
-                            for content in response_contents:
-                                clean_content = strip_thinking_tags(content)
-                                if clean_content:
-                                    await reply_helper(content=clean_content)
-                    
-                    model_used = fallback_model
-                    logging.info(f"Fallback model '{fallback_model}' succeeded")
-                    break  # Success - exit fallback loop
-                    
-                except Exception as fallback_error:
-                    # This fallback failed, try next one
-                    logging.warning(f"Fallback model '{fallback_model}' failed: {parse_error_message(fallback_error)}")
-                    if fallback_idx == len(fallback_models) - 1:
-                        # Last fallback also failed
-                        logging.exception("Error while generating response (all fallback models failed)")
-                        channel_info = f"in #{new_msg.channel.name}" if hasattr(new_msg.channel, 'name') else "in DM"
-                        await notify_admin_error(fallback_error, f"Failed to generate response {channel_info} (all models failed)")
-                    continue
+                        if use_plain:
+                            for chunk in response_contents:
+                                if c := strip_thinking(chunk): await reply_helper(content=c)
+                    logging.info(f"Fallback '{fb_model}' succeeded")
+                    break
+                except Exception as fe:
+                    logging.warning(f"Fallback '{fb_model}' failed: {parse_error_message(fe)}")
+                    if fi == len(fallbacks) - 1:
+                        logging.exception("All fallbacks failed")
+                        await notify_admin_error(fe, f"All models failed in #{getattr(new_msg.channel, 'name', 'DM')}")
         else:
-            # No fallback available or already tried fallback
-            logging.exception("Error while generating response")
-            channel_info = f"in #{new_msg.channel.name}" if hasattr(new_msg.channel, 'name') else "in DM"
-            await notify_admin_error(e, f"Failed to generate response {channel_info}")
+            logging.exception("Error generating response")
+            await notify_admin_error(e, f"Failed in #{getattr(new_msg.channel, 'name', 'DM')}")
 
-    for response_msg in response_msgs:
-        # Strip thinking tags before caching
-        clean_text = strip_thinking_tags("".join(response_contents))
-        msg_nodes[response_msg.id].text = clean_text
-        msg_nodes[response_msg.id].lock.release()
+    for rm in response_msgs:
+        msg_nodes[rm.id].text = strip_thinking("".join(response_contents))
+        msg_nodes[rm.id].lock.release()
 
-    # Delete oldest MsgNodes (lowest message IDs) from the cache
-    if (num_nodes := len(msg_nodes)) > MAX_MESSAGE_NODES:
-        for msg_id in sorted(msg_nodes.keys())[: num_nodes - MAX_MESSAGE_NODES]:
-            async with msg_nodes.setdefault(msg_id, MsgNode()).lock:
-                msg_nodes.pop(msg_id, None)
+    if (n := len(msg_nodes)) > MAX_MESSAGE_NODES:
+        for mid in sorted(msg_nodes.keys())[:n - MAX_MESSAGE_NODES]:
+            async with msg_nodes.setdefault(mid, MsgNode()).lock:
+                msg_nodes.pop(mid, None)
 
+
+# ── Scheduled tasks ──────────────────────────────────────────────────────────
 
 async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> None:
-    """Run a scheduled task with given configuration."""
-    try:
-        if not task_config.get("enabled", False):
-            return
-        
-        channel_id = task_config.get("channel_id")
-        user_id = task_config.get("user_id")
-        model_name = task_config.get("model", curr_model)
-        prompt = task_config.get("prompt", "Check my emails")
-        
-        target = None
-        
-        # Try to get target channel or user
-        if channel_id:
-            target = discord_bot.get_channel(channel_id)
-            if not target:
-                logging.warning(f"Scheduled task '{task_name}': channel {channel_id} not found")
-                return
-        elif user_id:
-            # First try to get user from bot's cache (faster and more reliable)
-            user_obj = discord_bot.get_user(user_id)
-            if not user_obj:
-                try:
-                    user_obj = await discord_bot.fetch_user(user_id)
-                except discord.NotFound:
-                    logging.warning(f"Scheduled task '{task_name}': user {user_id} not found")
-                    return
-            
-            # Check if we can DM this user
-            if user_obj.bot:
-                logging.warning(f"Scheduled task '{task_name}': cannot DM to bots (user {user_id} is a bot)")
-                return
-            
-            target = user_obj
-        else:
-            logging.warning(f"Scheduled task '{task_name}': no channel_id or user_id configured")
-            return
-        
-        # Setup LLM client
-        provider, model = model_name.removesuffix(":vision").split("/", 1)
-        provider_config = config["providers"][provider]
-        
-        logging.info(f"━━━ Scheduled Task '{task_name}' ━━━")
-        logging.info(f"Using model: {model_name}")
-        
-        model_parameters = config["models"].get(model_name, None)
-        
-        logging.info(f"Model '{model_name}' exists in config.models: {model_name in config.get('models', {})}")
-        logging.info(f"Model parameters from config: {model_parameters}")
-        
-        # Get system prompt from model config or global config
-        model_system_prompt = None
-        if model_parameters and isinstance(model_parameters, dict):
-            model_system_prompt = model_parameters.get("system_prompt")
-        
-        task_system_prompt = model_system_prompt or config.get("system_prompt", "")
-        if task_system_prompt:
-            now = datetime.now().astimezone()
-            task_system_prompt = task_system_prompt.replace("{date}", now.strftime("%B %d %Y")).replace("{time}", now.strftime("%H:%M:%S %Z%z")).strip()
-        
-        # Build messages for API
-        task_messages = [{"role": "user", "content": prompt}]
-        if task_system_prompt:
-            task_messages.append({"role": "system", "content": task_system_prompt})
-        
-        # Stream response
-        response_text = ""
-        
-        # Check if this is an Ollama provider
-        is_ollama = provider == "ollama"
-        
-        if is_ollama:
-            # Setup for Ollama
-            ollama_host = provider_config["base_url"]
-            ollama_service = OllamaService(host=ollama_host)
-            
-            # Get tools from model config
-            tools_enabled = []
-            think_enabled = False
-            if model_parameters and isinstance(model_parameters, dict):
-                tools_enabled = model_parameters.get("tools", [])
-                think_enabled = model_parameters.get("think", False)
-            
-            logging.info(f"[Task: {task_name}] Ollama config - Tools: {tools_enabled}, Thinking: {think_enabled}")
-            
-            # Run primary Ollama model
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None,
-                ollama_service.run,
-                task_messages,
-                model,
-                tools_enabled,
-                think_enabled
-            )
-            
-            response_text = result.get("content", "")
-            tool_results = result.get("tool_results", [])
-            
-            # Strip thinking tags
-            response_text = strip_thinking_tags(response_text)
-            
-            if tool_results:
-                logging.info(f"[Task: {task_name}] Tool results: {len(tool_results)} tools executed")
-                response_text += "\n\n**Tool Results:**\n" + "\n".join(tool_results)
-        else:
-            # Setup for OpenAI-compatible providers
-            base_url = provider_config["base_url"]
-            api_key = provider_config.get("api_key", "sk-no-key-required")
-            openai_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
-            
-            extra_headers = provider_config.get("extra_headers")
-            extra_query = provider_config.get("extra_query")
-            extra_body = (provider_config.get("extra_body") or {}) | (model_parameters or {}) or None
-            
+    if not task_config.get("enabled", False):
+        return
 
-            
-            models_to_try = [(model, openai_client, model_name, extra_headers, extra_query, extra_body)]
-            
-            # Add fallback models if configured (task-specific or global)
+    channel_id = task_config.get("channel_id")
+    user_id = task_config.get("user_id")
+    model_name = task_config.get("model", curr_model)
+    prompt = task_config.get("prompt", "Check my emails")
+
+    # Resolve target
+    if channel_id:
+        target = discord_bot.get_channel(channel_id)
+        if not target:
+            logging.warning(f"Task '{task_name}': channel {channel_id} not found"); return
+    elif user_id:
+        target = discord_bot.get_user(user_id)
+        if not target:
+            try: target = await discord_bot.fetch_user(user_id)
+            except discord.NotFound:
+                logging.warning(f"Task '{task_name}': user {user_id} not found"); return
+        if target.bot:
+            logging.warning(f"Task '{task_name}': cannot DM bots"); return
+    else:
+        logging.warning(f"Task '{task_name}': no channel_id or user_id"); return
+
+    provider, model = model_name.removesuffix(":vision").split("/", 1)
+    provider_cfg = config["providers"][provider]
+    model_params = config["models"].get(model_name)
+
+    logging.info(f"━━━ Task '{task_name}' | {model_name} | params: {model_params}")
+
+    # System prompt: task-specific > model-specific > global
+    sys_prompt = (
+        task_config.get("system_prompt")
+        or (isinstance(model_params, dict) and model_params.get("system_prompt"))
+        or config.get("system_prompt", "")
+    )
+    if sys_prompt:
+        sys_prompt = format_system_prompt(sys_prompt, False)
+
+    # Message order: system first (for Ollama/API), then user prompt
+    task_messages = []
+    if sys_prompt:
+        task_messages.append({"role": "system", "content": sys_prompt})
+    task_messages.append({"role": "user", "content": prompt})
+
+    # For Ollama: merge task-level tools/think with model params (task overrides)
+    if provider == "ollama":
+        effective_params = dict(model_params) if isinstance(model_params, dict) else {}
+        if "tools" in task_config:
+            effective_params["tools"] = task_config["tools"]
+        if "think" in task_config:
+            effective_params["think"] = task_config["think"]
+        model_params = effective_params
+    else:
+        # For OpenAI/OpenRouter: merge task-level tools so tasks can override model tools
+        effective_params = dict(model_params) if isinstance(model_params, dict) else {}
+        if "tools" in task_config:
+            effective_params["tools"] = task_config["tools"]
+        model_params = effective_params
+
+    response_text = ""
+    try:
+        if provider == "ollama":
+            result = await run_ollama(provider_cfg, model, model_params, task_messages)
+            response_text = strip_thinking(result.get("content", ""))
+        else:
             fallback_models = task_config.get("fallback_models") or config.get("fallback_models", []) or []
-            
-            # Build list of all models to try
-            for fallback_model in fallback_models:
-                if not fallback_model or not str(fallback_model).strip():
-                    continue
+            task_extra_body = build_extra_body(provider_cfg, model_params, exclude={"tools", "system_prompt"})
+            task_tools = get_openai_tools((model_params or {}).get("tools") if isinstance(model_params, dict) else None)
+            models_to_try = [(model, build_openai_client(provider_cfg), model_name,
+                              provider_cfg.get("extra_headers"), provider_cfg.get("extra_query"),
+                              task_extra_body, task_tools)]
+
+            for fb in fallback_models:
+                if not fb or not str(fb).strip(): continue
                 try:
-                    fallback_provider, fallback_model_name = fallback_model.removesuffix(":vision").split("/", 1)
-                    fallback_provider_config = config["providers"][fallback_provider]
-                    
-                    if fallback_provider == "ollama":
-                        # Skip ollama as fallback for now (can be enhanced later)
-                        logging.debug(f"[Task: {task_name}] Skipping ollama fallback model (not yet supported for fallback)")
-                        continue
-                    
-                    fallback_openai_client = AsyncOpenAI(
-                        base_url=fallback_provider_config["base_url"],
-                        api_key=fallback_provider_config.get("api_key", "sk-no-key-required")
-                    )
-                    fallback_model_params = config["models"].get(fallback_model, None)
-                    fallback_extra_headers = fallback_provider_config.get("extra_headers")
-                    fallback_extra_query = fallback_provider_config.get("extra_query")
-                    fallback_extra_body = (fallback_provider_config.get("extra_body") or {}) | (fallback_model_params or {}) or None
-                    
-                    models_to_try.append((fallback_model_name, fallback_openai_client, fallback_model, fallback_extra_headers, fallback_extra_query, fallback_extra_body))
-                except Exception as setup_error:
-                    logging.warning(f"Scheduled task '{task_name}': Failed to setup fallback model '{fallback_model}': {setup_error}")
-            
-            last_error = None
-            for attempt_idx, model_info in enumerate(models_to_try):
+                    fp, fm = fb.removesuffix(":vision").split("/", 1)
+                    if fp == "ollama": continue
+                    fc = config["providers"][fp]
+                    fmp = config["models"].get(fb)
+                    fmp_extra = build_extra_body(fc, fmp, exclude={"tools", "system_prompt"})
+                    fmp_tools = get_openai_tools((fmp or {}).get("tools") if isinstance(fmp, dict) else None)
+                    models_to_try.append((fm, build_openai_client(fc), fb, fc.get("extra_headers"), fc.get("extra_query"), fmp_extra, fmp_tools))
+                except Exception as se:
+                    logging.warning(f"Task '{task_name}': fallback setup failed for '{fb}': {se}")
+
+            for ai, (am, ac, amn, aeh, aeq, aeb, atools) in enumerate(models_to_try):
                 try:
                     response_text = ""
-                    attempt_model, attempt_client, attempt_model_name, attempt_extra_headers, attempt_extra_query, attempt_extra_body = model_info
-                    
-                    logging.info(f"[Task: {task_name}] API request to model={attempt_model}")
-                    async for chunk in await attempt_client.chat.completions.create(
-                        model=attempt_model,
-                        messages=task_messages[::-1],
-                        stream=True,
-                        extra_headers=attempt_extra_headers,
-                        extra_query=attempt_extra_query,
-                        extra_body=attempt_extra_body
-                    ):
-                        if choice := chunk.choices[0] if chunk.choices else None:
-                            response_text += choice.delta.content or ""
-                    
-                    # Success - break out of retry loop
-                    if attempt_idx > 0:
-                        logging.info(f"Scheduled task '{task_name}': Fallback model [{attempt_idx}/{len(models_to_try)-1}] '{attempt_model_name}' succeeded")
-                    break
-                    
-                except Exception as e:
-                    last_error = e
-                    if attempt_idx == 0:
-                        # Primary model failed
-                        logging.warning(f"Scheduled task '{task_name}': Primary model failed: {parse_error_message(e)}")
-                        if len(models_to_try) > 1:
-                            logging.info(f"Scheduled task '{task_name}': Attempting {len(models_to_try) - 1} fallback model(s)")
-                        else:
-                            # No fallback
-                            raise
-                    else:
-                        # Fallback failed
-                        fallback_num = attempt_idx
-                        total_fallbacks = len(models_to_try) - 1
-                        logging.warning(f"Scheduled task '{task_name}': Fallback model [{fallback_num}/{total_fallbacks}] failed: {parse_error_message(e)}")
-                        if attempt_idx < len(models_to_try) - 1:
-                            # More fallbacks to try
-                            continue
-                        else:
-                            # Last model failed
-                            logging.error(f"Scheduled task '{task_name}': All models exhausted")
-                            raise
-        
-        # Send response in chunks if needed
-        max_message_length = 4096
-        if response_text:
-            for i in range(0, len(response_text), max_message_length):
-                chunk = response_text[i:i+max_message_length]
-                try:
-                    await target.send(chunk)
-                except discord.Forbidden:
-                    logging.error(
-                        f"Scheduled task '{task_name}': Cannot DM user {user_id}. "
-                        f"The user may have:\n"
-                        f"  - DMs disabled from server members/bots\n"
-                        f"  - Blocked the bot\n"
-                        f"  - Privacy settings that block the bot\n"
-                        f"Try having the user start a DM with the bot first, then retry."
+                    create_kw = dict(
+                        model=am, messages=task_messages, stream=True,
+                        extra_headers=aeh, extra_query=aeq, extra_body=aeb
                     )
-                    return
-            target_info = f"channel {channel_id}" if channel_id else f"user {user_id}"
-            logging.info(f"Scheduled task '{task_name}' executed: sent results to {target_info}")
+                    if atools:
+                        create_kw["tools"] = atools
+                    async for chunk in await ac.chat.completions.create(**create_kw):
+                        if choice := (chunk.choices[0] if chunk.choices else None):
+                            response_text += choice.delta.content or ""
+                    if ai > 0: logging.info(f"Task '{task_name}': fallback '{amn}' succeeded")
+                    break
+                except Exception as e:
+                    logging.warning(f"Task '{task_name}': {'primary' if ai == 0 else f'fallback [{ai}]'} failed: {parse_error_message(e)}")
+                    if ai == len(models_to_try) - 1: raise
+
+        max_len = 4096
+        if response_text:
+            for i in range(0, len(response_text), max_len):
+                try:
+                    await target.send(response_text[i:i+max_len])
+                except discord.Forbidden:
+                    logging.error(f"Task '{task_name}': Cannot DM user {user_id} (DMs disabled/blocked)"); return
+            logging.info(f"Task '{task_name}' sent to {'channel ' + str(channel_id) if channel_id else 'user ' + str(user_id)}")
         else:
             await target.send(f"📧 No response from task '{task_name}'")
-            
+
     except discord.errors.HTTPException as e:
-        if e.code == 50007:  # Cannot send messages to this user
-            logging.error(
-                f"Scheduled task '{task_name}': Discord error 50007 - Cannot send DM. "
-                f"The user may have DMs disabled or has blocked the bot. "
-                f"User {user_id} needs to allow DMs from bots in Discord settings."
-            )
+        if e.code == 50007:
+            logging.error(f"Task '{task_name}': Cannot DM user {user_id} (error 50007)")
         else:
-            logging.exception(f"Discord error in scheduled task '{task_name}'")
-            # Notify admin about Discord errors even if fallback was successful
-            await notify_admin_error(e, f"Scheduled task '{task_name}' - Discord error")
+            logging.exception(f"Task '{task_name}': Discord error")
+            await notify_admin_error(e, f"Task '{task_name}' Discord error")
     except Exception as e:
-        logging.exception(f"Error in scheduled task '{task_name}'")
-        # Only notify if all models failed
-        await notify_admin_error(e, f"Scheduled task '{task_name}' failed (all {len(models_to_try)} model(s) failed)")
+        logging.exception(f"Task '{task_name}' failed")
+        await notify_admin_error(e, f"Task '{task_name}' failed (all models)")
 
 
-def parse_cron(cron_expr: str) -> dict[str, Any]:
-    """Parse cron expression into APScheduler kwargs.
-    Format: minute hour day month day_of_week
-    Example: '0 9 * * *' = 9:00 AM every day
-    Example: '* * * * *' = Every minute
-    """
-    parts = cron_expr.split()
+def parse_cron(expr: str) -> dict[str, Any]:
+    parts = expr.split()
     if len(parts) != 5:
-        raise ValueError(f"Invalid cron format: {cron_expr}. Use: minute hour day month day_of_week")
-    
-    minute, hour, day, month, day_of_week = parts
-    
-    # Always set second=0 to prevent running every second
+        raise ValueError(f"Invalid cron: {expr}")
+    minute, hour, day, month, dow = parts
     kwargs = {"second": 0}
-    
-    if minute != "*":
-        kwargs["minute"] = minute
-    if hour != "*":
-        kwargs["hour"] = hour
-    if day != "*":
-        kwargs["day"] = day
-    if month != "*":
-        kwargs["month"] = month
-    if day_of_week != "*":
-        kwargs["day_of_week"] = day_of_week
-    
+    if minute != "*": kwargs["minute"] = minute
+    if hour != "*": kwargs["hour"] = hour
+    if day != "*": kwargs["day"] = day
+    if month != "*": kwargs["month"] = month
+    if dow != "*": kwargs["day_of_week"] = dow
     return kwargs
 
 
 def setup_scheduled_tasks() -> None:
-    """Setup scheduled tasks based on config."""
-    scheduled_tasks = config.get("scheduled_tasks", {})
-    
-    # Handle both dict and legacy flat config format
-    if isinstance(scheduled_tasks, dict) and "enabled" in scheduled_tasks and "cron" in scheduled_tasks:
-        # Legacy format: single task stored at top level
-        if scheduled_tasks.get("enabled", False):
-            cron_expr = scheduled_tasks.get("cron", "0 9 * * *")
+    tasks = config.get("scheduled_tasks", {})
+    # Legacy single-task format
+    if isinstance(tasks, dict) and "enabled" in tasks and "cron" in tasks:
+        if tasks.get("enabled"):
             try:
-                scheduler.add_job(
-                    run_scheduled_task,
-                    "cron",
-                    id="email_check",
-                    replace_existing=True,
-                    args=["email_check", scheduled_tasks],
-                    **parse_cron(cron_expr)
-                )
-                logging.info(f"Scheduled task setup with cron: {cron_expr}")
+                scheduler.add_job(run_scheduled_task, "cron", id="email_check", replace_existing=True,
+                                   args=["email_check", tasks], **parse_cron(tasks.get("cron", "0 9 * * *")))
+                logging.info(f"Legacy scheduled task: {tasks.get('cron')}")
             except Exception as e:
-                logging.error(f"Failed to setup scheduled task: {e}")
-    else:
-        # New format: multiple tasks
-        for task_name, task_config in scheduled_tasks.items():
-            if not isinstance(task_config, dict):
-                continue
-                
-            if not task_config.get("enabled", False):
-                logging.debug(f"Scheduled task '{task_name}' is disabled")
-                continue
-            
-            cron_expr = task_config.get("cron", "0 9 * * *")
-            try:
-                scheduler.add_job(
-                    run_scheduled_task,
-                    "cron",
-                    id=f"scheduled_task_{task_name}",
-                    replace_existing=True,
-                    args=[task_name, task_config],
-                    **parse_cron(cron_expr)
-                )
-                logging.info(f"Scheduled task '{task_name}' setup with cron: {cron_expr}")
-            except Exception as e:
-                logging.error(f"Failed to setup scheduled task '{task_name}': {e}")
+                logging.error(f"Failed to setup legacy task: {e}")
+        return
+
+    for name, tc in tasks.items():
+        if not isinstance(tc, dict) or not tc.get("enabled", False):
+            continue
+        try:
+            scheduler.add_job(run_scheduled_task, "cron", id=f"scheduled_task_{name}", replace_existing=True,
+                               args=[name, tc], **parse_cron(tc.get("cron", "0 9 * * *")))
+            logging.info(f"Scheduled task '{name}': {tc.get('cron')}")
+        except Exception as e:
+            logging.error(f"Failed to setup task '{name}': {e}")
 
 
 async def main() -> None:

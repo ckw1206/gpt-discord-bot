@@ -1,6 +1,7 @@
 # This gitignore is a whitelist. Inspired by https://rgbcu.be/blog/gitignore
+config.yaml
 
-*
+*/__pycache__
 
 !.gitignore
 
@@ -8,7 +9,6 @@
 !*.py
 
 !Dockerfile
-!config-example.yaml
-!config.yaml.default
+!config.yaml.template
 !docker-compose.yaml
 !requirements.txt
