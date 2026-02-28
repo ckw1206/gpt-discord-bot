@@ -24,37 +24,41 @@ When using web_fetch:
 Always prioritize factual extraction over explanation of the source.
 """
 
-from dotenv import load_dotenv
-from ollama import WebFetchResponse, WebSearchResponse
 from typing import Union
+
+from ollama import WebFetchResponse, WebSearchResponse
 
 
 def format_web_search_results(
     results: Union[WebSearchResponse, WebFetchResponse],
     user_search: str,
-):
-    output = []
+) -> str:
+    output: list[str] = []
 
     if isinstance(results, WebSearchResponse):
         output.append(f'Search results for "{user_search}":')
         for result in results.results:
-            output.append(f'{result.title}' if result.title else f'{result.content}')
-            output.append(f'   URL: {result.url}')
-            output.append(f'   Content: {result.content}')
-            output.append('')
-        return '\n'.join(output).rstrip()
+            output.append(f"{result.title}" if result.title else f"{result.content}")
+            output.append(f"   URL: {result.url}")
+            output.append(f"   Content: {result.content}")
+            output.append("")
+        return "\n".join(output).rstrip()
 
-    elif isinstance(results, WebFetchResponse):
+    if isinstance(results, WebFetchResponse):
         output.append(f'Fetch results for "{user_search}":')
-        output.extend([
-            f'Title: {results.title}',
-            f'URL: {user_search}' if user_search else '',
-            f'Content: {results.content}',
-        ])
+        output.extend(
+            [
+                f"Title: {results.title}",
+                f"URL: {user_search}" if user_search else "",
+                f"Content: {results.content}",
+            ]
+        )
         if results.links:
-            output.append(f'Links: {", ".join(results.links)}')
-        output.append('')
-        return '\n'.join(output).rstrip()
+            output.append(f"Links: {', '.join(results.links)}")
+        output.append("")
+        return "\n".join(output).rstrip()
+
+    return ""
 
 
 # ── Ollama Tool Schemas ───────────────────────────────────────────────────────
@@ -88,3 +92,4 @@ WEB_FETCH_SCHEMA = {
         },
     },
 }
+

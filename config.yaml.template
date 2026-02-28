@@ -84,47 +84,64 @@ providers:
     # If web search is enabled here but not in Open WebUI, the API parameter will be ignored
 
 models:
-  openai/gpt-5:
-    reasoning_effort: high
-    verbosity: medium
+  # Example: OpenRouter model using a named persona (see bot/config/personas/)
+  openrouter/openrouter/free:
+    persona: discord-bot           # maps to bot/config/personas/discord-bot.(md|txt|yaml|yml)
+    supports_tools: true
+    tools: ["web_search", "web_fetch", "visuals_core"]
+    think: true
+    # Optional: model-specific fallback models for interactive chat
+    # fallback_models:
+    #   - "openai/gpt-5"
 
-  openrouter/x-ai/grok-4-fast:online:
-
+  # Example: task-oriented model hosted on Open WebUI
   open-webui/gmail-checker:
+    # Optional model-level persona (usually tasks use their own persona instead)
+    # persona: email_reader
   
   # Ollama model with tools support
   # ollama/qwen3:14b:
   #   tools: ["web_search", "web_fetch", "get_temperature"]  # Optional: enable specific tools
-  #   system_prompt: "You are a helpful AI assistant"  # Optional: model-specific system prompt
+  #   persona: some_persona_name  # Optional: model-specific persona
   #   think: true  # Optional: enable thinking mode (supported by reasoning models)
 
-fallback_models:  # Optional: List of models to try if main model fails (in order). Leave empty to disable.
+fallback_models:  # Optional: global list of models to try if the primary model fails (in order).
   # - "ollama/llama2"
   # - "groq/mixtral"
 
 
 
 # Scheduled tasks (optional)
+#
+# There are two ways to configure tasks:
+# 1) Inline under `scheduled_tasks` (simple / legacy style, shown below).
+# 2) Recommended: create separate YAML files under `bot/config/tasks/*.yaml`.
+#
+# When both are used, file-based tasks override inline ones with the same name.
+
 scheduled_tasks:
   # Cron schedule format: minute hour day month day_of_week
   # Example: "0 9 * * *" = Every day at 9:00 AM
   # Example: "0 9 * * 1-5" = Mon-Fri at 9:00 AM
   # For DMs: use "user_id" instead of "channel_id"
-  # Optional: system_prompt overrides the model's or global system prompt for this task.
+  # Optional: persona / system_prompt overrides the model's or global system prompt for this task.
 
-  # Task 1: Email check to channel
+  # Task 1: Email check to channel (inline example)
   email_check:
     enabled: false
     cron: "0 9 * * *"  # Every day at 9:00 AM
     channel_id: 1470406324331483259  # Send to channel
     model: "open-webui/gmail-checker"
-    fallback_models:  # Optional: Task-specific fallback models, or omit to use global fallback_models
+    # Highest priority: task-level fallback models
+    fallback_models:  # Optional: Task-specific fallback models, then global fallback_models
       - "ollama/llama2"
     prompt: "Summarize my recent emails"
+    # You can use either a named persona or an inline system_prompt:
+    # persona: email_reader
     system_prompt: | # optional: task-specific instructions for this job
       Reply in Traditional Chinese. Focus on major indices and notable movers only.
   
-  # Task 2: Send DM to user
+  # Task 2: Send DM to user (inline example)
   DM_MSG:
     enabled: false
     cron: "0 * * * *"  # Every hour

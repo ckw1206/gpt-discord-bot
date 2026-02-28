@@ -1,0 +1,7 @@
+name: email_check
+enabled: false
+cron: "0 1 * * *"
+user_id: 467935812554850309
+model: "open-webui/gmail-checker"
+prompt: "Are there any noteworthy or actionable emails?"
+

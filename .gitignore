@@ -1,7 +1,28 @@
 # This gitignore is a whitelist. Inspired by https://rgbcu.be/blog/gitignore
 config.yaml
 
-*/__pycache__
+# Python cache files
+__pycache__/
+*/__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
 
 !.gitignore
 

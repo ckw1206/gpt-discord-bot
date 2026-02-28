@@ -6,6 +6,7 @@ import logging
 from typing import Any, Literal, Optional
 import os
 import re
+import sys
 
 import discord
 from discord.app_commands import Choice
@@ -15,8 +16,13 @@ from openai import AsyncOpenAI
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import yaml
 
-from services.ollama import OllamaService
-from tools.registry import get_openai_tools
+from bot.config.loader import get_config as load_config_with_validation
+from bot.config.personas import try_load_persona
+from bot.config.tasks import load_scheduled_tasks
+from bot.discord.errors import notify_admin_error as core_notify_admin_error, handle_app_command_error
+from bot.llm.errors import parse_error_message
+from bot.llm.ollama_service import OllamaService
+from bot.llm.tools import get_openai_tools
 
 if os.environ.get("DEBUG"):
     logging.basicConfig(level=logging.DEBUG)
@@ -38,23 +44,8 @@ def strip_thinking(text: str) -> str:
 
 
 def get_config(filename: str = "config.yaml") -> dict[str, Any]:
-    with open(filename, encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-
-def parse_error_message(error: Exception) -> str:
-    s, t = str(error), type(error).__name__
-    if "429" in s or t == "RateLimitError":
-        return "⚠️ Rate Limited: API provider is temporarily rate-limited. Please retry shortly."
-    if "401" in s or "Unauthorized" in s:
-        return "❌ Authentication Error: Invalid API key or credentials."
-    if "404" in s or t == "NotFound":
-        return "❌ Not Found: The requested resource was not found."
-    if "403" in s or t == "Forbidden":
-        return "❌ Forbidden: You don't have permission to access this resource."
-    if "Connection" in t or "ECONNREFUSED" in s or "ETIMEDOUT" in s:
-        return "❌ Connection Error: Unable to connect to the API provider."
-    return f"❌ {t}: {s.split(chr(10))[0][:100]}"
+    """Load and validate config.yaml with comprehensive checks."""
+    return load_config_with_validation(filename)
 
 
 def format_system_prompt(prompt: str, accept_usernames: bool) -> str:
@@ -109,23 +100,7 @@ class MsgNode:
 
 
 async def notify_admin_error(error: Exception, context: str = "") -> None:
-    try:
-        admin_ids = config.get("permissions", {}).get("users", {}).get("admin_ids", [])
-        if not admin_ids:
-            return
-        msg = (
-            f"🤖 **Bot Error Notification**\n"
-            f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"📝 Context: {context}\n\nError: {parse_error_message(error)}"
-        )
-        for admin_id in admin_ids:
-            try:
-                user = discord_bot.get_user(admin_id) or await discord_bot.fetch_user(admin_id)
-                await user.send(msg)
-            except Exception as e:
-                logging.warning(f"Could not notify admin {admin_id}: {e}")
-    except Exception as e:
-        logging.warning(f"Failed to notify admins: {e}")
+    await core_notify_admin_error(discord_bot, config, error, context)
 
 
 async def run_ollama(provider_cfg: dict, model: str, model_params: Any, messages: list) -> dict:
@@ -171,6 +146,11 @@ async def model_command(interaction: discord.Interaction, model: str) -> None:
     else:
         out = "You don't have permission to change the model."
     await interaction.response.send_message(out, ephemeral=(interaction.channel.type == discord.ChannelType.private))
+
+
+@discord_bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: Exception) -> None:
+    await handle_app_command_error(interaction, error, discord_bot, config)
 
 
 @model_command.autocomplete("model")
@@ -256,21 +236,31 @@ async def on_message(new_msg: discord.Message) -> None:
             if curr_node.text is None:
                 cleaned = curr_msg.content.removeprefix(discord_bot.user.mention).lstrip()
                 good_att = [a for a in curr_msg.attachments if a.content_type and any(a.content_type.startswith(x) for x in ("text", "image"))]
-                att_resps = await asyncio.gather(*[httpx_client.get(a.url) for a in good_att])
+                att_resps = await asyncio.gather(
+                    *[httpx_client.get(a.url) for a in good_att],
+                    return_exceptions=True,
+                )
 
                 curr_node.text = "\n".join(
                     ([cleaned] if cleaned else [])
                     + ["\n".join(filter(None, (e.title, e.description, e.footer.text))) for e in curr_msg.embeds]
                     + [c.content for c in curr_msg.components if c.type == discord.ComponentType.text_display]
-                    + [r.text for a, r in zip(good_att, att_resps) if a.content_type.startswith("text")]
+                    + [
+                        r.text
+                        for a, r in zip(good_att, att_resps)
+                        if not isinstance(r, Exception) and a.content_type.startswith("text")
+                    ]
                 )
                 curr_node.images = [
                     dict(type="image_url", image_url=dict(url=f"data:{a.content_type};base64,{b64encode(r.content).decode()}"))
-                    for a, r in zip(good_att, att_resps) if a.content_type.startswith("image")
+                    for a, r in zip(good_att, att_resps)
+                    if not isinstance(r, Exception) and a.content_type.startswith("image")
                 ]
                 curr_node.role = "assistant" if curr_msg.author == discord_bot.user else "user"
                 curr_node.user_id = curr_msg.author.id if curr_node.role == "user" else None
-                curr_node.has_bad_attachments = len(curr_msg.attachments) > len(good_att)
+                curr_node.has_bad_attachments = len(curr_msg.attachments) > len(good_att) or any(
+                    isinstance(r, Exception) for r in att_resps
+                )
 
                 try:
                     if (
@@ -313,8 +303,22 @@ async def on_message(new_msg: discord.Message) -> None:
 
     logging.info(f"Message (uid:{new_msg.author.id}, att:{len(new_msg.attachments)}, len:{len(messages)}): {new_msg.content}")
 
-    # System prompt
-    sys_prompt = (isinstance(model_params, dict) and model_params.get("system_prompt")) or config.get("system_prompt")
+    # System prompt: persona > model-specific > global
+    sys_prompt = ""
+    if isinstance(model_params, dict):
+        persona_name = model_params.get("persona")
+        if persona_name:
+            sys_prompt = try_load_persona(persona_name) or ""
+        if not sys_prompt:
+            sys_prompt = model_params.get("system_prompt") or ""
+
+    if not sys_prompt:
+        global_persona = config.get("persona")
+        if global_persona:
+            sys_prompt = try_load_persona(global_persona) or ""
+        if not sys_prompt:
+            sys_prompt = config.get("system_prompt") or ""
+
     if sys_prompt:
         sys_prompt = format_system_prompt(sys_prompt, accept_usernames)
 
@@ -370,10 +374,26 @@ async def on_message(new_msg: discord.Message) -> None:
 
         else:
             client = build_openai_client(provider_cfg)
+            
+            # Check if model supports tools (default: False for OpenAI/OpenRouter, True for Ollama)
+            # Only models that explicitly support tool calling can use tools
+            supports_tools = (model_params or {}).get("supports_tools", False) if isinstance(model_params, dict) else False
+            
             # OpenAI/OpenRouter expect tools as list of {type, function: {name, description, parameters}}; don't put tools/system_prompt in extra_body
-            api_tools = get_openai_tools((model_params or {}).get("tools") if isinstance(model_params, dict) else None)
+            # Only include tools if the model explicitly supports them
+            tool_names = (model_params or {}).get("tools", []) if isinstance(model_params, dict) else []
+            api_tools = get_openai_tools(tool_names) if supports_tools and tool_names else []
+            
+            if tool_names and not supports_tools:
+                logging.warning(
+                    "Model '%s' has tools configured (%s) but 'supports_tools' is not set to true. "
+                    "Tools will be disabled. Most OpenRouter models don't support tool calling. "
+                    "Set 'supports_tools: true' only for models that support it (e.g., some Anthropic models).",
+                    model, tool_names
+                )
+            
             extra_body = build_extra_body(
-                provider_cfg, model_params, exclude={"tools", "system_prompt"}
+                provider_cfg, model_params, exclude={"tools", "system_prompt", "supports_tools"}
             )
             extra_headers = provider_cfg.get("extra_headers")
             extra_query = provider_cfg.get("extra_query")
@@ -419,7 +439,11 @@ async def on_message(new_msg: discord.Message) -> None:
                     if c := strip_thinking(chunk): await reply_helper(content=c)
 
     except Exception as e:
-        fallbacks = config.get("fallback_models", []) or []
+        # Fallback order: model-level, then global
+        model_fallbacks = []
+        if isinstance(model_params, dict):
+            model_fallbacks = model_params.get("fallback_models") or []
+        fallbacks = (model_fallbacks or []) + (config.get("fallback_models", []) or [])
         if fallbacks:
             for fi, fb_model in enumerate(fallbacks):
                 if not fb_model or not fb_model.strip(): continue
@@ -427,10 +451,40 @@ async def on_message(new_msg: discord.Message) -> None:
                 try:
                     fb_provider, fb_model_name = fb_model.removesuffix(":vision").split("/", 1)
                     fb_cfg = config["providers"][fb_provider]
-                    fb_client = build_openai_client(fb_cfg)
                     fb_params = config["models"].get(fb_model)
-                    fb_extra_body = build_extra_body(fb_cfg, fb_params, exclude={"tools", "system_prompt"})
-                    fb_tools = get_openai_tools((fb_params or {}).get("tools") if isinstance(fb_params, dict) else None)
+                    
+                    # Handle Ollama provider differently (uses different API)
+                    if fb_provider == "ollama":
+                        async with new_msg.channel.typing():
+                            result = await run_ollama(fb_cfg, fb_model_name, fb_params, api_messages)
+                        text = strip_thinking(result.get("content", ""))
+                        response_contents = [text[i:i+max_len] for i in range(0, len(text), max_len)] if text else []
+                        
+                        if use_plain:
+                            for chunk in response_contents:
+                                if c := strip_thinking(chunk): await reply_helper(content=c)
+                        else:
+                            if not response_contents: response_contents = ["(No response)"]
+                            for idx, chunk in enumerate(response_contents):
+                                if idx == 0:
+                                    e = embed if len(response_contents) == 1 else discord.Embed.from_dict(dict(fields=[dict(name=w, value="", inline=False) for w in sorted(user_warnings)]))
+                                    e.description = strip_thinking(chunk)
+                                    if show_color: e.color = EMBED_COLOR_COMPLETE
+                                    await reply_helper(embed=e)
+                                else:
+                                    await reply_helper(content=strip_thinking(chunk))
+                        logging.info(f"Fallback '{fb_model}' succeeded")
+                        break
+                    
+                    # Handle OpenAI/OpenRouter providers
+                    fb_client = build_openai_client(fb_cfg)
+                    
+                    # Check if fallback model supports tools
+                    fb_supports_tools = (fb_params or {}).get("supports_tools", False) if isinstance(fb_params, dict) else False
+                    fb_tool_names = (fb_params or {}).get("tools", []) if isinstance(fb_params, dict) else []
+                    fb_tools = get_openai_tools(fb_tool_names) if fb_supports_tools and fb_tool_names else []
+                    
+                    fb_extra_body = build_extra_body(fb_cfg, fb_params, exclude={"tools", "system_prompt", "supports_tools"})
                     curr_content = finish_reason = None
                     response_contents = []
 
@@ -478,6 +532,10 @@ async def on_message(new_msg: discord.Message) -> None:
         else:
             logging.exception("Error generating response")
             await notify_admin_error(e, f"Failed in #{getattr(new_msg.channel, 'name', 'DM')}")
+            try:
+                await new_msg.reply("所有模型皆無法回應，已通知管理員。請稍後再試。")
+            except Exception:
+                pass
 
     for rm in response_msgs:
         msg_nodes[rm.id].text = strip_thinking("".join(response_contents))
@@ -522,12 +580,32 @@ async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> Non
 
     logging.info(f"━━━ Task '{task_name}' | {model_name} | params: {model_params}")
 
-    # System prompt: task-specific > model-specific > global
-    sys_prompt = (
-        task_config.get("system_prompt")
-        or (isinstance(model_params, dict) and model_params.get("system_prompt"))
-        or config.get("system_prompt", "")
-    )
+    # System prompt: task persona > task-specific > model persona > model-specific > global persona > global
+    sys_prompt = ""
+
+    # Task-level persona or inline system prompt
+    task_persona = task_config.get("persona")
+    if task_persona:
+        sys_prompt = try_load_persona(task_persona) or ""
+    if not sys_prompt:
+        sys_prompt = task_config.get("system_prompt") or ""
+
+    # Model-level persona or inline system prompt
+    if not sys_prompt and isinstance(model_params, dict):
+        model_persona = model_params.get("persona")
+        if model_persona:
+            sys_prompt = try_load_persona(model_persona) or ""
+        if not sys_prompt:
+            sys_prompt = model_params.get("system_prompt") or ""
+
+    # Global persona or global inline system prompt
+    if not sys_prompt:
+        global_persona = config.get("persona")
+        if global_persona:
+            sys_prompt = try_load_persona(global_persona) or ""
+        if not sys_prompt:
+            sys_prompt = config.get("system_prompt", "")
+
     if sys_prompt:
         sys_prompt = format_system_prompt(sys_prompt, False)
 
@@ -558,7 +636,9 @@ async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> Non
             result = await run_ollama(provider_cfg, model, model_params, task_messages)
             response_text = strip_thinking(result.get("content", ""))
         else:
-            fallback_models = task_config.get("fallback_models") or config.get("fallback_models", []) or []
+            task_fallbacks = task_config.get("fallback_models") or []
+            global_fallbacks = config.get("fallback_models", []) or []
+            fallback_models = task_fallbacks + global_fallbacks
             task_extra_body = build_extra_body(provider_cfg, model_params, exclude={"tools", "system_prompt"})
             task_tools = get_openai_tools((model_params or {}).get("tools") if isinstance(model_params, dict) else None)
             models_to_try = [(model, build_openai_client(provider_cfg), model_name,
@@ -616,6 +696,10 @@ async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> Non
     except Exception as e:
         logging.exception(f"Task '{task_name}' failed")
         await notify_admin_error(e, f"Task '{task_name}' failed (all models)")
+        try:
+            await target.send(f"❌ Task '{task_name}' 無法完成，已通知管理員。請稍後再試。")
+        except Exception:
+            pass
 
 
 def parse_cron(expr: str) -> dict[str, Any]:
@@ -633,24 +717,37 @@ def parse_cron(expr: str) -> dict[str, Any]:
 
 
 def setup_scheduled_tasks() -> None:
-    tasks = config.get("scheduled_tasks", {})
-    # Legacy single-task format
-    if isinstance(tasks, dict) and "enabled" in tasks and "cron" in tasks:
-        if tasks.get("enabled"):
+    # Legacy single-task format (backwards compatibility)
+    legacy = config.get("scheduled_tasks", {})
+    if isinstance(legacy, dict) and "enabled" in legacy and "cron" in legacy:
+        if legacy.get("enabled"):
             try:
-                scheduler.add_job(run_scheduled_task, "cron", id="email_check", replace_existing=True,
-                                   args=["email_check", tasks], **parse_cron(tasks.get("cron", "0 9 * * *")))
-                logging.info(f"Legacy scheduled task: {tasks.get('cron')}")
+                scheduler.add_job(
+                    run_scheduled_task,
+                    "cron",
+                    id="email_check",
+                    replace_existing=True,
+                    args=["email_check", legacy],
+                    **parse_cron(legacy.get("cron", "0 9 * * *")),
+                )
+                logging.info(f"Legacy scheduled task: {legacy.get('cron')}")
             except Exception as e:
                 logging.error(f"Failed to setup legacy task: {e}")
         return
 
+    tasks = load_scheduled_tasks(config)
     for name, tc in tasks.items():
         if not isinstance(tc, dict) or not tc.get("enabled", False):
             continue
         try:
-            scheduler.add_job(run_scheduled_task, "cron", id=f"scheduled_task_{name}", replace_existing=True,
-                               args=[name, tc], **parse_cron(tc.get("cron", "0 9 * * *")))
+            scheduler.add_job(
+                run_scheduled_task,
+                "cron",
+                id=f"scheduled_task_{name}",
+                replace_existing=True,
+                args=[name, tc],
+                **parse_cron(tc.get("cron", "0 9 * * *")),
+            )
             logging.info(f"Scheduled task '{name}': {tc.get('cron')}")
         except Exception as e:
             logging.error(f"Failed to setup task '{name}': {e}")
@@ -660,7 +757,8 @@ async def main() -> None:
     await discord_bot.start(config["bot_token"])
 
 
-try:
-    asyncio.run(main())
-except KeyboardInterrupt:
-    pass
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass

@@ -1,11 +1,11 @@
-from services.ollama import OllamaService
+from bot.llm.ollama_service import OllamaService
 from rich import print
 
 service = OllamaService(
     host="http://172.10.168.100:11434"
 )
 
-query = "今天日期是 2026/02/27, How's the weather for Taiwan Taipei today? answer it in zhtw chinese."
+query = "How's the weather for Taiwan Taipei today? answer it in zhtw chinese."
 
 messages = [
     {"role": "user", "content": query}

@@ -1,0 +1,12 @@
+name: stock_market_check
+enabled: true
+cron: "30 0 * * 1-5"
+user_id: 467935812554850309
+model: "ollama/qwen3:14b"
+prompt: "Let’s take a look at the key movements in Taiwan and US markets"
+tools:
+  - "web_search"
+  - "web_fetch"
+  - "visuals_core"
+persona: stock_market_analyst
+

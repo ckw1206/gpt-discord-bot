@@ -1,3 +1,67 @@
+## gpt-discord-bot (fork)
+
+Discord bot that connects to multiple LLM providers (OpenRouter, Ollama, Open WebUI, etc.), supports tools, personas (人格設定檔), and scheduled tasks.
+
+### Layout
+
+- `llmcord.py` – main entrypoint (Discord bot, message handling, scheduling).
+- `bot/` – new modular package:
+  - `bot/config/loader.py` – config loading (`CONFIG_PATH` env var supported).
+  - `bot/config/personas/` – persona files (e.g. `lao_pi.md`, `stock_market_analyst.md`).
+  - `bot/config/tasks/` – scheduled task definitions (`*.yaml`).
+  - `bot/llm/` – LLM helpers, Ollama service, tools and error helpers.
+  - `bot/discord/errors.py` – centralized Discord/admin error handling.
+
+You can still run the bot exactly as before:
+
+```bash
+python llmcord.py
+```
+
+Or, via the new package entrypoint:
+
+```bash
+python -m bot.main
+```
+
+### Config basics (`config.yaml`)
+
+- **Providers**: under `providers`, one key per provider (`openrouter`, `ollama`, `open-webui`, etc.).
+- **Models**: under `models`, keys are `"provider/model-name"` (e.g. `openrouter/openrouter/free`).
+- **Personas**:
+  - Global: `persona: some_name` at top-level (optional).
+  - Model-level: `persona: some_name` under a model.
+  - Task-level: `persona: some_name` inside a scheduled task.
+  - `some_name` maps to a file under `bot/config/personas/some_name.(md|txt|yaml|yml)`.
+- **Fallback models**:
+  - Global: `fallback_models: [...]` at top-level (used when a primary model fails).
+  - Model-level: `fallback_models: [...]` under a model (used for interactive messages).
+  - Task-level: `fallback_models: [...]` inside a task (used for that task only).
+
+Resolution order:
+
+- Interactive messages: `model.fallback_models` then global `fallback_models`.
+- Scheduled tasks: task `fallback_models` then global `fallback_models`.
+
+### Personas & Scheduled Tasks
+
+For detailed instructions on creating and configuring **personas** and **scheduled tasks**, see [`bot/config/README.md`](bot/config/README.md).
+
+Quick reference:
+- **Personas**: Place files in `bot/config/personas/` (`.md`, `.txt`, `.yaml`)
+- **Tasks**: Place files in `bot/config/tasks/` (`.yaml`)
+- Tasks are auto-loaded and merged with `config.yaml` entries (file-based tasks take priority)
+
+### Error handling
+
+- All serious errors are sent to admins listed in `permissions.users.admin_ids`.
+- For LLM/API errors:
+  - The bot retries using configured fallback models.
+  - If all models fail, users receive a short message (in zh-TW) and admins get a DM with details.
+- For scheduled tasks:
+  - Similar fallback behavior; if everything fails, the target channel/user is notified and admins are DM’d.
+- Slash command errors are handled centrally and reported to admins via `bot/discord/errors.py`.
+
 <h1 align="center">
   llmcord
 </h1>
@@ -115,58 +179,6 @@ Use `/clear` to reset the conversation history and message cache. This is useful
 | **models** | Add the models you want to use in `<provider>/<model>: <parameters>` format (examples are included). When you run `/model` these models will show up as autocomplete suggestions.<br /><br />**Refer to each provider's documentation for supported parameters.**<br /><br />**The first model in your `models` list will be the default model at startup.**<br /><br />**Some vision models may need `:vision` added to the end of their name to enable image support.** |
 | **fallback_models** | *(Optional)* A list of models to automatically try if the primary model fails (e.g., rate limiting, API errors). The bot will try each fallback in order until one succeeds. If all models fail, the admin will be notified.<br /><br />**Format:** List of model names (matching the `models` section).<br /><br />**Example:**<br />```yaml<br />fallback_models:<br />  - "groq/mixtral-8x7b-32768"<br />  - "ollama/llama2"<br />```<br /><br />**Benefits:**<br />- Automatic failover when main model is rate-limited or unavailable<br />- No admin notifications if fallback succeeds<br />- Perfect for free-tier APIs with rate limits |
 | **system_prompt** | *(Optional)* Customize the bot's behavior with a custom system prompt. Leave empty, blank, or remove entirely to use the model's default system prompt.<br /><br />**You can use the `{date}` and `{time}` tags in your system prompt to insert the current date and time, based on your host computer's time zone.**<br /><br />**Example:** `system_prompt: "You are a helpful assistant"` |
-
-### Scheduled tasks (optional):
-
-| Setting | Description |
-| --- | --- |
-| **enabled** | Set to `true` to enable a scheduled task, `false` to disable. |
-| **cron** | Cron schedule expression in the format: `minute hour day month day_of_week`<br /><br />**Examples:**<br />- `"0 9 * * *"` - Every day at 9:00 AM<br />- `"0 9 * * 1-5"` - Mon-Fri at 9:00 AM<br />- `"0 */2 * * *"` - Every 2 hours<br />- `"30 6 * * 0"` - Sunday at 6:30 AM<br /><br />**See [crontab.guru](https://crontab.guru) for help building expressions.** |
-| **channel_id** | Discord channel ID where the task result will be sent. **Example:** `1470093690549567498`<br /><br />**Use either `channel_id` OR `user_id`, not both.** |
-| **user_id** | Discord user ID for sending direct messages. Use this to send DM results to a specific user. **Example:** `467935812554850309`<br /><br />**Use either `channel_id` OR `user_id`, not both.** |
-| **model** | The LLM model to use for this task. **Example:** `"open-webui/gmail-checker"`<br /><br />**Must match a model defined in the `models` section.** |
-| **prompt** | The message/prompt to send to the LLM for this task. **Example:** `"Summarize my recent emails"` |
-| **system_prompt** | *(Optional)* Override the system prompt for this task only. Task-level &gt; model-level &gt; global. Use `{date}` and `{time}` for current date/time. Use YAML pipe `|` for multi-line prompts. |
-| **tools** | *(Optional, Ollama only)* List of tools to enable for this task. Overrides the model's `tools` when set. Use when the task needs web search or other tools.<br /><br />**Example:** `tools: ["web_search", "web_fetch"]`<br /><br />**Available:** `web_search`, `web_fetch`, `visuals_core` (see Ollama Integration below). |
-| **think** | *(Optional, Ollama only)* Set to `true` to enable reasoning/thinking mode for this task. Overrides the model's `think` when set. |
-| **fallback_models** | *(Optional)* List of fallback models for this specific task. If not set, uses the global `fallback_models`. If set to an empty list, disables fallback for this task.<br /><br />**Example:** `fallback_models: ["groq/mixtral", "ollama/llama2"]` |
-
-**Example configuration:**
-```yaml
-fallback_models:  # Global fallback - applies to all messages and tasks without task-specific fallback
-  - "groq/mixtral-8x7b-32768"
-  - "ollama/llama2"
-
-scheduled_tasks:
-  # Daily email check to a channel with custom fallback
-  email_check:
-    enabled: true
-    cron: "0 9 * * *"
-    channel_id: 12345678
-    model: "open-webui/gmail-checker"
-    fallback_models:  # Optional: Use different fallback for this specific task
-      - "groq/mixtral"
-    prompt: "Summarize my recent emails"
-  
-  # Daily summary sent as a DM (uses global fallback_models)
-  daily_summary:
-    enabled: true
-    cron: "0 18 * * *"
-    user_id: 12345678  # Sends as DM to this user
-    model: "open-webui/llama3.2:1b"
-    prompt: "Give me a daily summary of important items"
-
-  # Ollama task with tools (e.g. web search for market data)
-  market_brief:
-    enabled: true
-    cron: "30 8 * * 1-5"
-    channel_id: 12345678
-    model: "ollama/qwen3:14b"
-    prompt: "Summarize overnight moves in Taiwan and US markets."
-    system_prompt: "Reply in Traditional Chinese. Use web search for current data."
-    tools: ["web_search", "web_fetch"]
-    think: true
-```
 
 3. Run the bot:
 

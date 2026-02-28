@@ -1,13 +1,15 @@
+from __future__ import annotations
+
 import json
 import logging
 import os
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 from dotenv import load_dotenv
 from ollama import Client
 
-from tools.web_search import format_web_search_results, WEB_SEARCH_SCHEMA, WEB_FETCH_SCHEMA
-from tools.visuals_core import generate_visualization, VISUALS_CORE_SCHEMA
+from .tools.web_search import format_web_search_results, WEB_SEARCH_SCHEMA, WEB_FETCH_SCHEMA
+from .tools.visuals_core import generate_visualization, VISUALS_CORE_SCHEMA
 
 
 class OllamaService:
@@ -33,16 +35,15 @@ class OllamaService:
             return generate_visualization(viz_type=viz_type, title=title, **kwargs)
 
         self.tool_map: Dict[str, Any] = {
-            "web_search":   _web_search,
-            "web_fetch":    _web_fetch,
+            "web_search": _web_search,
+            "web_fetch": _web_fetch,
             "visuals_core": _visuals_core,
-            # "get_temperature": get_temperature,  <- uncomment to enable
         }
 
         # ── Schemas: what gets sent to the Ollama client ────────────────────
         self.tool_schemas: Dict[str, dict] = {
-            "web_search":   WEB_SEARCH_SCHEMA,
-            "web_fetch":    WEB_FETCH_SCHEMA,
+            "web_search": WEB_SEARCH_SCHEMA,
+            "web_fetch": WEB_FETCH_SCHEMA,
             "visuals_core": VISUALS_CORE_SCHEMA,
         }
 
@@ -58,9 +59,7 @@ class OllamaService:
     ) -> Dict[str, Any]:
 
         enabled_schemas = [
-            self.tool_schemas[n]
-            for n in (enable_tools or [])
-            if n in self.tool_schemas
+            self.tool_schemas[n] for n in (enable_tools or []) if n in self.tool_schemas
         ]
         tool_outputs = []
 
@@ -90,7 +89,11 @@ class OllamaService:
 
             messages.append(response.message)
 
-            logging.info(f"OllamaService: response content={repr(response.message.content)}, tool_calls={bool(response.message.tool_calls)}")
+            logging.info(
+                "OllamaService: response content=%r, tool_calls=%s",
+                response.message.content,
+                bool(response.message.tool_calls),
+            )
             if not response.message.tool_calls:
                 break
 
@@ -100,25 +103,27 @@ class OllamaService:
                 fn = self.tool_map.get(name)
 
                 if not fn:
-                    logging.warning(f"OllamaService: unknown tool '{name}'")
+                    logging.warning("OllamaService: unknown tool '%s'", name)
                     continue
 
-                logging.info(f"OllamaService: tool '{name}' args={args}")
+                logging.info("OllamaService: tool '%s' args=%s", name, args)
                 try:
                     result = fn(**args)
                 except Exception as e:
-                    logging.error(f"OllamaService: tool '{name}' failed: {e}")
+                    logging.error("OllamaService: tool '%s' failed: %s", name, e)
                     result = f"Tool error: {e}"
 
                 formatted = self._format(name, result, args)[:max_tool_chars]
                 tool_outputs.append(formatted)
-                messages.append({"role": "tool", "tool_name": name, "content": formatted})
+                messages.append(
+                    {"role": "tool", "tool_name": name, "content": formatted}
+                )
 
         return {
-            "content":      response.message.content or "",
-            "thinking":     getattr(response.message, "thinking", None),
+            "content": response.message.content or "",
+            "thinking": getattr(response.message, "thinking", None),
             "tool_results": tool_outputs,
-            "messages":     messages,
+            "messages": messages,
         }
 
     # ── Formatter ───────────────────────────────────────────────────────────
@@ -129,3 +134,4 @@ class OllamaService:
         if name == "web_fetch":
             return format_web_search_results(result, user_search=args.get("url", ""))
         return str(result)
+

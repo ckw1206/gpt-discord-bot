@@ -10,7 +10,7 @@ Output: Markdown/ASCII text (Discord-safe, no HTML/CDN dependencies)
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Literal, Optional, Set, Tuple
+from typing import Any, Dict, List, Literal, Set, Tuple
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -21,6 +21,7 @@ ChartType = Literal["bar", "line", "scatter"]
 
 
 # ── Entry Point ──────────────────────────────────────────────────────────────
+
 
 def generate_visualization(
     viz_type: str,
@@ -41,14 +42,14 @@ def generate_visualization(
       "tree"             - tree (dict or list of {parent, child} edges)
     """
     handlers = {
-        "table":            _render_table,
+        "table": _render_table,
         "comparison_table": _render_comparison_table,
-        "chart":            _render_chart,
-        "multi_chart":      _render_multi_chart,
-        "heatmap":          _render_heatmap,
-        "timeline":         _render_timeline,
-        "flowchart":        _render_flowchart,
-        "tree":             _render_tree,
+        "chart": _render_chart,
+        "multi_chart": _render_multi_chart,
+        "heatmap": _render_heatmap,
+        "timeline": _render_timeline,
+        "flowchart": _render_flowchart,
+        "tree": _render_tree,
     }
     fn = handlers.get(viz_type)
     if not fn:
@@ -58,11 +59,12 @@ def generate_visualization(
 
 # ── JSON Coercion ────────────────────────────────────────────────────────────
 
+
 def _coerce(value: Any, expect: Literal["list", "dict", "any"]) -> Any:
     if isinstance(value, (list, dict)):
         return value
     if isinstance(value, str):
-        s = value.strip().strip('"\'')
+        s = value.strip().strip("\"'")
         if s.startswith(("{", "[")):
             try:
                 return json.loads(s)
@@ -91,6 +93,7 @@ def _float_list(value: Any) -> List[float]:
 
 # ── Markdown Helpers ─────────────────────────────────────────────────────────
 
+
 def _codeblock(title: str, text: str) -> str:
     header = f"### {title}\n\n" if title else ""
     return f"{header}```\n{text.rstrip()}\n```"
@@ -101,15 +104,18 @@ def _md_table(title: str, cols: List[str], rows: List[Dict[str, Any]]) -> str:
         return str("" if v is None else v).replace("\n", " ").strip()
 
     header = "| " + " | ".join(cols) + " |"
-    sep    = "| " + " | ".join(["---"] * len(cols)) + " |"
-    body   = "\n".join("| " + " | ".join(cell(r.get(c, "")) for c in cols) + " |" for r in rows)
-    table  = f"{header}\n{sep}\n{body}"
+    sep = "| " + " | ".join(["---"] * len(cols)) + " |"
+    body = "\n".join(
+        "| " + " | ".join(cell(r.get(c, "")) for c in cols) + " |" for r in rows
+    )
+    table = f"{header}\n{sep}\n{body}"
     return f"### {title}\n\n{table}" if title else table
 
 
 # ── Tables ───────────────────────────────────────────────────────────────────
 
-def _render_table(*, title: str = "", rows: Any = None, **_) -> str:
+
+def _render_table(*, title: str = "", rows: Any = None, **_: Any) -> str:
     rows = _coerce(rows, "list")
     if not isinstance(rows, list) or not rows:
         return "No valid rows provided."
@@ -125,12 +131,17 @@ def _render_table(*, title: str = "", rows: Any = None, **_) -> str:
 
 
 def _render_comparison_table(
-    *, title: str = "", items: Any = None, criteria: Any = None,
-    scores: Any = None, highlight_best: bool = True, **_
+    *,
+    title: str = "",
+    items: Any = None,
+    criteria: Any = None,
+    scores: Any = None,
+    highlight_best: bool = True,
+    **_: Any,
 ) -> str:
-    items_l    = _str_list(items)
+    items_l = _str_list(items)
     criteria_l = _str_list(criteria)
-    scores_d   = _coerce(scores, "dict")
+    scores_d = _coerce(scores, "dict")
     if not isinstance(scores_d, dict):
         scores_d = {}
 
@@ -156,7 +167,9 @@ def _render_comparison_table(
         for c in criteria_l:
             v = item_scores.get(c, "—")
             try:
-                row[c] = f"{v} ★" if highlight_best and float(v) == best.get(c) else v  # type: ignore
+                row[c] = (
+                    f"{v} ★" if highlight_best and float(v) == best.get(c) else v  # type: ignore
+                )
             except (TypeError, ValueError):
                 row[c] = v
         rows.append(row)
@@ -165,6 +178,7 @@ def _render_comparison_table(
 
 
 # ── ASCII Charts ─────────────────────────────────────────────────────────────
+
 
 def _x_labels(x: List[Any], n: int) -> str:
     return " ".join(f"{str(v)[:3]:^3}" for v in x) + " " * max(0, (n - len(x)) * 4)
@@ -196,7 +210,7 @@ def _ascii_line(x: List[Any], y: List[float], title: str) -> str:
         row = max(0, min(h - 1, int((max_y - v) / rng * (h - 1))))
         grid[row][i * 2] = "●"
         if i > 0:
-            pr = max(0, min(h - 1, int((max_y - y[i-1]) / rng * (h - 1))))
+            pr = max(0, min(h - 1, int((max_y - y[i - 1]) / rng * (h - 1))))
             for r in range(min(pr, row), max(pr, row) + 1):
                 if r != pr and r != row:
                     grid[r][i * 2 - 1] = "│"
@@ -236,8 +250,12 @@ def _draw_chart(x: List[Any], y: List[float], title: str, chart_type: str) -> st
 
 
 def _render_chart(
-    *, title: str = "", x: Any = None, y: Any = None,
-    chart_type: str = "line", **_
+    *,
+    title: str = "",
+    x: Any = None,
+    y: Any = None,
+    chart_type: str = "line",
+    **_: Any,
 ) -> str:
     x_l, y_l = _coerce(x, "list"), _float_list(y)
     if not isinstance(x_l, list):
@@ -248,7 +266,11 @@ def _render_chart(
 
 
 def _render_multi_chart(
-    *, title: str = "", series: Any = None, chart_type: str = "line", **_
+    *,
+    title: str = "",
+    series: Any = None,
+    chart_type: str = "line",
+    **_: Any,
 ) -> str:
     series_l = _coerce(series, "list")
     if not isinstance(series_l, list) or not series_l:
@@ -266,9 +288,14 @@ def _render_multi_chart(
 
 # ── Heatmap ──────────────────────────────────────────────────────────────────
 
+
 def _render_heatmap(
-    *, title: str = "", data: Any = None,
-    row_labels: Any = None, col_labels: Any = None, **_
+    *,
+    title: str = "",
+    data: Any = None,
+    row_labels: Any = None,
+    col_labels: Any = None,
+    **_: Any,
 ) -> str:
     data_v = _coerce(data, "list")
     if not isinstance(data_v, list):
@@ -285,7 +312,9 @@ def _render_heatmap(
         return "No valid heatmap data."
 
     r = _str_list(row_labels) or [f"Row {i+1}" for i in range(len(matrix))]
-    c = _str_list(col_labels) or [f"Col {j+1}" for j in range(max(len(row) for row in matrix))]
+    c = _str_list(col_labels) or [
+        f"Col {j+1}" for j in range(max(len(row) for row in matrix))
+    ]
 
     all_vals = [v for row in matrix for v in row]
     min_v, max_v = min(all_vals, default=0.0), max(all_vals, default=1.0)
@@ -293,12 +322,12 @@ def _render_heatmap(
     blocks = " ░▒▓█"
 
     lines = [" " * 12 + " ".join(f"{str(col)[:8]:^8}" for col in c), ""]
-    for i, rl in enumerate(r[:len(matrix)]):
+    for i, rl in enumerate(r[: len(matrix)]):
         row_str = f"{str(rl)[:10]:10} │"
         for j in range(len(c)):
             v = matrix[i][j] if j < len(matrix[i]) else 0.0
             idx = min(int((v - min_v) / rng * (len(blocks) - 1)), len(blocks) - 1)
-            row_str += f" {blocks[idx]*2}  "
+            row_str += f" {blocks[idx] * 2}  "
         lines.append(row_str)
 
     lines += ["", f"Range: {min_v:.2f} – {max_v:.2f}"]
@@ -307,8 +336,13 @@ def _render_heatmap(
 
 # ── Timeline ─────────────────────────────────────────────────────────────────
 
+
 def _render_timeline(
-    *, title: str = "", events: Any = None, show_dates: bool = True, **_
+    *,
+    title: str = "",
+    events: Any = None,
+    show_dates: bool = True,
+    **_: Any,
 ) -> str:
     ev = _coerce(events, "list")
     if not isinstance(ev, list) or not ev:
@@ -317,7 +351,7 @@ def _render_timeline(
     for e in ev[:MAX_ROWS]:
         if not isinstance(e, dict):
             continue
-        d   = str(e.get("date", "")).strip()
+        d = str(e.get("date", "")).strip()
         lab = str(e.get("label", "Event")).strip()
         det = str(e.get("detail", "")).strip()
         prefix = f"{d} — " if show_dates and d else ""
@@ -327,9 +361,13 @@ def _render_timeline(
 
 # ── Flowchart ────────────────────────────────────────────────────────────────
 
+
 def _render_flowchart(
-    *, title: str = "", steps: Any = None,
-    direction: str = "tb", **_
+    *,
+    title: str = "",
+    steps: Any = None,
+    direction: str = "tb",
+    **_: Any,
 ) -> str:
     v = _coerce(steps, "list")
     if not isinstance(v, list):
@@ -351,12 +389,20 @@ def _render_flowchart(
         for a, b, _ in edges:
             for n in (a, b):
                 if n not in seen:
-                    seen.add(n); order.append(n)
+                    seen.add(n)
+                    order.append(n)
         parts = []
         for i, node in enumerate(order):
             parts.append(f"[{node}]")
             if i < len(order) - 1:
-                lbl = next((l for a, b, l in edges if a == node and b == order[i+1] and l), "")
+                lbl = next(
+                    (
+                        l
+                        for a, b, l in edges
+                        if a == node and b == order[i + 1] and l
+                    ),
+                    "",
+                )
                 parts.append(f"--{lbl}-->" if lbl else "---->")
         text = " ".join(parts)
     else:
@@ -370,9 +416,14 @@ def _render_flowchart(
 
 # ── Tree ─────────────────────────────────────────────────────────────────────
 
+
 def _render_tree(
-    *, title: str = "", tree: Any = None,
-    root_label: str = "root", max_depth: int = 12, **_
+    *,
+    title: str = "",
+    tree: Any = None,
+    root_label: str = "root",
+    max_depth: int = 12,
+    **_: Any,
 ) -> str:
     max_depth = max(1, min(int(max_depth), 50))
     v = _coerce(tree, "any")
@@ -380,13 +431,15 @@ def _render_tree(
     def from_dict(node: Any, prefix: str = "", depth: int = 0) -> List[str]:
         if depth > max_depth:
             return [prefix + "…"]
-        out = []
+        out: List[str] = []
         if isinstance(node, dict):
             items = list(node.items())
             for i, (k, val) in enumerate(items):
                 last = i == len(items) - 1
                 out.append(prefix + ("└─ " if last else "├─ ") + str(k))
-                out.extend(from_dict(val, prefix + ("   " if last else "│  "), depth + 1))
+                out.extend(
+                    from_dict(val, prefix + ("   " if last else "│  "), depth + 1)
+                )
         elif isinstance(node, list):
             for i, val in enumerate(node):
                 last = i == len(node) - 1
@@ -406,18 +459,21 @@ def _render_tree(
             p, c = str(e.get("parent", "")).strip(), str(e.get("child", "")).strip()
             if p and c:
                 children.setdefault(p, []).append(c)
-                all_n.update([p, c]); child_n.add(c)
+                all_n.update([p, c])
+                child_n.add(c)
         root = next(iter(all_n - child_n), None) or root_label
 
         def walk(n: str, prefix: str = "", depth: int = 0) -> List[str]:
             if depth > max_depth:
                 return [prefix + "…"]
             kids = children.get(n, [])
-            out = []
+            out: List[str] = []
             for i, k in enumerate(kids):
                 last = i == len(kids) - 1
                 out.append(prefix + ("└─ " if last else "├─ ") + k)
-                out.extend(walk(k, prefix + ("   " if last else "│  "), depth + 1))
+                out.extend(
+                    walk(k, prefix + ("   " if last else "│  "), depth + 1)
+                )
             return out
 
         return "\n".join([str(root)] + walk(str(root)))
@@ -431,7 +487,9 @@ def _render_tree(
 
     return _codeblock(title or "Tree", text)
 
-# ── Ollama Tool Schema ────────────────────────────────────────────────────────
+
+# ── Ollama Tool Schema ───────────────────────────────────────────────────────
+
 
 VISUALS_CORE_SCHEMA = {
     "type": "function",
@@ -446,18 +504,27 @@ VISUALS_CORE_SCHEMA = {
             "properties": {
                 "viz_type": {
                     "type": "string",
-                    "description": "Type of visualization: table | comparison_table | chart | multi_chart | heatmap | timeline | flowchart | tree"
+                    "description": "Type of visualization: table | comparison_table | chart | multi_chart | heatmap | timeline | flowchart | tree",
                 },
                 "title": {
                     "type": "string",
-                    "description": "Optional title for the visualization"
+                    "description": "Optional title for the visualization",
                 },
                 "data": {
                     "type": "string",
-                    "description": "JSON string of the data payload. For 'table': {rows:[{...}]}. For 'chart': {x:[...], y:[...], chart_type:'bar|line|scatter'}. For 'comparison_table': {items:[...], criteria:[...], scores:{...}}. For 'heatmap': {data:[[...]], row_labels:[...], col_labels:[...]}. For 'timeline': {events:[{date, label, detail}]}. For 'flowchart': {steps:[{from, to, label}]}. For 'tree': {tree:{...} or [{parent, child}]}."
+                    "description": (
+                        "JSON string of the data payload. For 'table': {rows:[{...}]}. "
+                        "For 'chart': {x:[...], y:[...], chart_type:'bar|line|scatter'}. "
+                        "For 'comparison_table': {items:[...], criteria:[...], scores:{...}}. "
+                        "For 'heatmap': {data:[[...]], row_labels:[...], col_labels:[...]}. "
+                        "For 'timeline': {events:[{date, label, detail}]}. "
+                        "For 'flowchart': {steps:[{from, to, label}]}. "
+                        "For 'tree': {tree:{...} or [{parent, child}]}."
+                    ),
                 },
             },
-            "required": ["viz_type", "data"]
-        }
-    }
+            "required": ["viz_type", "data"],
+        },
+    },
 }
+
