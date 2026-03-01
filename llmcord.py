@@ -553,11 +553,12 @@ async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> Non
 
     # System prompt resolution
     sys_prompt = ""
-    task_persona = task_config.get("persona")
-    if task_persona:
-        sys_prompt = try_load_persona(task_persona) or ""
-    if not sys_prompt:
-        sys_prompt = task_config.get("system_prompt") or ""
+    # Prioritize system_prompt directly from task_config
+    if task_config.get("system_prompt"):
+        sys_prompt = task_config.get("system_prompt")
+    # If no system_prompt in task_config, then try to load from persona
+    elif task_config.get("persona"):
+        sys_prompt = try_load_persona(task_config.get("persona")) or ""
     if not sys_prompt and isinstance(model_params, dict):
         model_persona = model_params.get("persona")
         if model_persona:
