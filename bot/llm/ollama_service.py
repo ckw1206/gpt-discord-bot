@@ -1,6 +1,13 @@
+"""
+bot/llm/ollama_service.py
+
+Ollama LLM runner with tool-calling support.
+All tool definitions live in bot/llm/tools/registry.py — nothing is hardcoded here.
+See SKILLS.md for how to add new tools.
+"""
+
 from __future__ import annotations
 
-import json
 import logging
 import os
 from typing import Any, Dict, List
@@ -8,8 +15,7 @@ from typing import Any, Dict, List
 from dotenv import load_dotenv
 from ollama import Client
 
-from .tools.web_search import format_web_search_results, WEB_SEARCH_SCHEMA, WEB_FETCH_SCHEMA
-from .tools.visuals_core import generate_visualization, VISUALS_CORE_SCHEMA
+from .tools.registry import build_tool_registry, format_tool_result
 
 
 class OllamaService:
@@ -20,32 +26,9 @@ class OllamaService:
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         self.client = Client(host=host, headers=headers)
 
-        # ── Callables: what actually runs when a tool is invoked ────────────
-        def _web_search(query: str) -> Any:
-            return self.client.web_search(query=query)
-
-        def _web_fetch(url: str) -> Any:
-            return self.client.web_fetch(url=url)
-
-        def _visuals_core(viz_type: str, data: str, title: str = "") -> str:
-            try:
-                kwargs = json.loads(data) if isinstance(data, str) else data
-            except Exception:
-                kwargs = {}
-            return generate_visualization(viz_type=viz_type, title=title, **kwargs)
-
-        self.tool_map: Dict[str, Any] = {
-            "web_search": _web_search,
-            "web_fetch": _web_fetch,
-            "visuals_core": _visuals_core,
-        }
-
-        # ── Schemas: what gets sent to the Ollama client ────────────────────
-        self.tool_schemas: Dict[str, dict] = {
-            "web_search": WEB_SEARCH_SCHEMA,
-            "web_fetch": WEB_FETCH_SCHEMA,
-            "visuals_core": VISUALS_CORE_SCHEMA,
-        }
+        # All tool callables + schemas + formatters loaded from registry.
+        # To add a new tool, edit bot/llm/tools/registry.py only.
+        self._registry = build_tool_registry(self.client)
 
     # ── Main Chat Runner ────────────────────────────────────────────────────
 
@@ -59,7 +42,9 @@ class OllamaService:
     ) -> Dict[str, Any]:
 
         enabled_schemas = [
-            self.tool_schemas[n] for n in (enable_tools or []) if n in self.tool_schemas
+            self._registry[n].schema
+            for n in (enable_tools or [])
+            if n in self._registry
         ]
         tool_outputs = []
 
@@ -100,20 +85,20 @@ class OllamaService:
             for call in response.message.tool_calls:
                 name = call.function.name
                 args = call.function.arguments
-                fn = self.tool_map.get(name)
+                entry = self._registry.get(name)
 
-                if not fn:
+                if not entry or not entry.fn:
                     logging.warning("OllamaService: unknown tool '%s'", name)
                     continue
 
                 logging.info("OllamaService: tool '%s' args=%s", name, args)
                 try:
-                    result = fn(**args)
+                    result = entry.fn(**args)
                 except Exception as e:
                     logging.error("OllamaService: tool '%s' failed: %s", name, e)
                     result = f"Tool error: {e}"
 
-                formatted = self._format(name, result, args)[:max_tool_chars]
+                formatted = format_tool_result(entry, result, args)[:max_tool_chars]
                 tool_outputs.append(formatted)
                 messages.append(
                     {"role": "tool", "tool_name": name, "content": formatted}
@@ -125,13 +110,3 @@ class OllamaService:
             "tool_results": tool_outputs,
             "messages": messages,
         }
-
-    # ── Formatter ───────────────────────────────────────────────────────────
-
-    def _format(self, name: str, result: Any, args: dict) -> str:
-        if name == "web_search":
-            return format_web_search_results(result, user_search=args.get("query", ""))
-        if name == "web_fetch":
-            return format_web_search_results(result, user_search=args.get("url", ""))
-        return str(result)
-

@@ -1,14 +1,15 @@
-from .registry import get_openai_tools, TOOL_SCHEMAS
+from .registry import get_openai_tools, build_tool_registry, format_tool_result, ToolEntry
 from .web_search import WEB_SEARCH_SCHEMA, WEB_FETCH_SCHEMA, format_web_search_results
 from .visuals_core import VISUALS_CORE_SCHEMA, generate_visualization
 
 __all__ = [
     "get_openai_tools",
-    "TOOL_SCHEMAS",
+    "build_tool_registry",
+    "format_tool_result",
+    "ToolEntry",
     "WEB_SEARCH_SCHEMA",
     "WEB_FETCH_SCHEMA",
     "format_web_search_results",
     "VISUALS_CORE_SCHEMA",
     "generate_visualization",
 ]
-
