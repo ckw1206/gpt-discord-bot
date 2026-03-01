@@ -7,3 +7,4 @@ ollama
 python-dotenv
 typing_extensions
 rich
+requests

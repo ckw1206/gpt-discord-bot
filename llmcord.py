@@ -22,7 +22,7 @@ from bot.config.tasks import load_scheduled_tasks
 from bot.discord.errors import notify_admin_error as core_notify_admin_error, handle_app_command_error
 from bot.llm.errors import parse_error_message
 from bot.llm.ollama_service import OllamaService
-from bot.llm.tools import get_openai_tools
+from bot.llm.tools import get_openai_tools, build_brave_registry, execute_tool_call
 
 if os.environ.get("DEBUG"):
     logging.basicConfig(level=logging.DEBUG)
@@ -103,7 +103,9 @@ async def notify_admin_error(error: Exception, context: str = "") -> None:
 
 
 async def run_ollama(provider_cfg: dict, model: str, model_params: Any, messages: list) -> dict:
-    ollama_service = OllamaService(host=provider_cfg["base_url"])
+    # Provider-level setting overrides global; global defaults to "brave"
+    web_search_provider = provider_cfg.get("web_search_provider") or config.get("web_search_provider", "brave")
+    ollama_service = OllamaService(host=provider_cfg["base_url"], web_search_provider=web_search_provider)
     tools = (model_params or {}).get("tools", []) if isinstance(model_params, dict) else []
     think = (model_params or {}).get("think", False) if isinstance(model_params, dict) else False
     ollama_messages = []
@@ -128,6 +130,90 @@ async def stream_openai(client: AsyncOpenAI, model: str, messages: list, **kwarg
                 break
             chunks.append(choice.delta.content or "")
     return chunks
+
+
+async def run_openai_with_tools(
+    client: AsyncOpenAI,
+    model: str,
+    messages: list,
+    tool_names: list[str],
+    extra_headers: Any,
+    extra_query: Any,
+    extra_body: Any,
+    max_tool_chars: int = 8000,
+) -> str:
+    """
+    Non-streaming OpenAI call with full tool call interception loop.
+    Works with ANY provider (OpenAI, OpenRouter, etc.) — tools are executed
+    bot-side (Brave web search, visuals_core, etc.) and results fed back.
+    Returns the final assistant text content.
+    """
+    registry = build_brave_registry()
+    tool_schemas = get_openai_tools(tool_names)
+    msgs = list(messages)
+
+    while True:
+        create_kw: dict = dict(
+            model=model,
+            messages=msgs,
+            extra_headers=extra_headers,
+            extra_query=extra_query,
+            extra_body=extra_body,
+        )
+        if tool_schemas:
+            create_kw["tools"] = tool_schemas
+
+        response = await client.chat.completions.create(**create_kw)
+        choice = response.choices[0] if response.choices else None
+        if not choice:
+            break
+
+        msg = choice.message
+        # Sanitise before appending: Gemini (and some others) reject content=null.
+        # Build the dict manually, only including fields that are actually set.
+        assistant_msg: dict = {"role": "assistant"}
+        if msg.content:
+            assistant_msg["content"] = msg.content
+        if msg.tool_calls:
+            assistant_msg["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                }
+                for tc in msg.tool_calls
+            ]
+        msgs.append(assistant_msg)
+
+        # No tool calls → we have the final answer
+        if not msg.tool_calls:
+            return msg.content or ""
+
+        # Execute tool calls in a thread so blocking I/O (Brave rate-limit sleep,
+        # HTTP requests) doesn't freeze the async event loop.
+        # Calls are serialised inside brave_web_search via a threading.Lock,
+        # respecting the 1.2s free-tier rate limit even when the model batches
+        # multiple tool calls in a single response.
+        import json as _json
+
+        async def _run_tool(tc_item) -> dict:
+            name = tc_item.function.name
+            try:
+                args = _json.loads(tc_item.function.arguments or "{}")
+            except Exception:
+                args = {}
+            result = await asyncio.to_thread(
+                execute_tool_call, name, args, registry, max_tool_chars
+            )
+            return {"role": "tool", "tool_call_id": tc_item.id, "content": result}
+
+        # Run sequentially — brave_web_search is already serialised by its lock,
+        # so parallel gather() would just queue up anyway and adds no benefit.
+        for tc in msg.tool_calls:
+            msgs.append(await _run_tool(tc))
+
+    return ""
+
 
 
 # ── Slash commands ──────────────────────────────────────────────────────────
@@ -464,20 +550,42 @@ async def on_message(new_msg: discord.Message) -> None:
                 await run_ollama_model(a_cfg, a_model, a_params)
             else:
                 a_client = build_openai_client(a_cfg) if not is_primary else build_openai_client(provider_cfg)
-                supports_tools = (a_params or {}).get("supports_tools", False) if isinstance(a_params, dict) else False
-                tool_names = (a_params or {}).get("tools", []) if isinstance(a_params, dict) else []
-                if tool_names and not supports_tools:
-                    logging.warning(
-                        "Model '%s' has tools configured but 'supports_tools' is not true — tools disabled.",
-                        attempt_model,
-                    )
-                api_tools = get_openai_tools(tool_names) if supports_tools and tool_names else []
+                a_params_dict = a_params if isinstance(a_params, dict) else {}
+                tool_names = a_params_dict.get("tools", [])
                 a_extra_body = build_extra_body(a_cfg, a_params, exclude={"tools", "system_prompt", "supports_tools"})
+                a_extra_headers = a_cfg.get("extra_headers")
+                a_extra_query = a_cfg.get("extra_query")
                 response_contents.clear()
-                await run_openai_stream(
-                    a_client, a_model, api_messages, api_tools,
-                    a_cfg.get("extra_headers"), a_cfg.get("extra_query"), a_extra_body,
-                )
+
+                if tool_names:
+                    # Tool-calling path: non-streaming, bot executes tools (Brave etc.)
+                    text = await asyncio.wait_for(
+                        run_openai_with_tools(
+                            a_client, a_model, api_messages, tool_names,
+                            a_extra_headers, a_extra_query, a_extra_body,
+                        ),
+                        timeout=RESPONSE_TIMEOUT_SECONDS,
+                    )
+                    if text:
+                        chunks = [text[i:i+max_len] for i in range(0, len(text), max_len)]
+                        response_contents.extend(chunks)
+                        if use_plain:
+                            for chunk in chunks:
+                                if c := strip_thinking(chunk):
+                                    await reply_helper(content=c)
+                        else:
+                            for idx, chunk in enumerate(chunks):
+                                e = embed if idx == 0 else discord.Embed()
+                                e.description = strip_thinking(chunk)
+                                if show_color:
+                                    e.color = EMBED_COLOR_COMPLETE
+                                await reply_helper(embed=e)
+                else:
+                    # No tools: normal streaming path
+                    await run_openai_stream(
+                        a_client, a_model, api_messages, [],
+                        a_extra_headers, a_extra_query, a_extra_body,
+                    )
 
             if not is_primary:
                 logging.info(f"Fallback '{attempt_model}' succeeded")
@@ -527,7 +635,7 @@ async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> Non
 
     channel_id = task_config.get("channel_id")
     user_id = task_config.get("user_id")
-    model_name = task_config.get("model", curr_model)
+    model_name = task_config.get("model") or curr_model
     prompt = task_config.get("prompt", "Check my emails")
 
     if channel_id:
@@ -599,10 +707,10 @@ async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> Non
             global_fallbacks = config.get("fallback_models", []) or []
             fallback_models = task_fallbacks + global_fallbacks
             task_extra_body = build_extra_body(provider_cfg, effective_params, exclude={"tools", "system_prompt"})
-            task_tools = get_openai_tools((effective_params or {}).get("tools"))
+            task_tool_names = (effective_params or {}).get("tools") or []
             models_to_try = [(model, build_openai_client(provider_cfg), model_name,
                               provider_cfg.get("extra_headers"), provider_cfg.get("extra_query"),
-                              task_extra_body, task_tools)]
+                              task_extra_body, task_tool_names)]
 
             for fb in fallback_models:
                 if not fb or not str(fb).strip(): continue
@@ -612,26 +720,37 @@ async def run_scheduled_task(task_name: str, task_config: dict[str, Any]) -> Non
                     fc = config["providers"][fp]
                     fmp = config["models"].get(fb)
                     fmp_extra = build_extra_body(fc, fmp, exclude={"tools", "system_prompt"})
-                    fmp_tools = get_openai_tools((fmp or {}).get("tools") if isinstance(fmp, dict) else None)
+                    fmp_tools = (fmp or {}).get("tools") or [] if isinstance(fmp, dict) else []
                     models_to_try.append((fm, build_openai_client(fc), fb, fc.get("extra_headers"), fc.get("extra_query"), fmp_extra, fmp_tools))
                 except Exception as se:
                     logging.warning(f"Task '{task_name}': fallback setup failed for '{fb}': {se}")
 
-            for ai, (am, ac, amn, aeh, aeq, aeb, atools) in enumerate(models_to_try):
+            for ai, (am, ac, amn, aeh, aeq, aeb, atools_names) in enumerate(models_to_try):
                 try:
                     response_text = ""
-                    create_kw = dict(model=am, messages=task_messages, stream=True,
-                                     extra_headers=aeh, extra_query=aeq, extra_body=aeb)
-                    if atools:
-                        create_kw["tools"] = atools
 
-                    async def _task_stream() -> None:
-                        nonlocal response_text
-                        async for chunk in await ac.chat.completions.create(**create_kw):
-                            if choice := (chunk.choices[0] if chunk.choices else None):
-                                response_text += choice.delta.content or ""
+                    if atools_names:
+                        # Tool-calling path: bot executes tools (Brave etc.)
+                        response_text = await asyncio.wait_for(
+                            run_openai_with_tools(
+                                ac, am, task_messages, atools_names,
+                                aeh, aeq, aeb,
+                            ),
+                            timeout=RESPONSE_TIMEOUT_SECONDS,
+                        )
+                    else:
+                        # No tools: plain streaming
+                        create_kw = dict(model=am, messages=task_messages, stream=True,
+                                         extra_headers=aeh, extra_query=aeq, extra_body=aeb)
 
-                    await asyncio.wait_for(_task_stream(), timeout=RESPONSE_TIMEOUT_SECONDS)
+                        async def _task_stream() -> None:
+                            nonlocal response_text
+                            async for chunk in await ac.chat.completions.create(**create_kw):
+                                if choice := (chunk.choices[0] if chunk.choices else None):
+                                    response_text += choice.delta.content or ""
+
+                        await asyncio.wait_for(_task_stream(), timeout=RESPONSE_TIMEOUT_SECONDS)
+
                     if ai > 0: logging.info(f"Task '{task_name}': fallback '{amn}' succeeded")
                     break
 
