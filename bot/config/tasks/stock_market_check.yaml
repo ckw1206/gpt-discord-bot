@@ -1,10 +1,11 @@
 name: stock_market_check
 enabled: true
-cron: "40 21 * * *"
+cron: "12 22 * * *"
 user_id: 467935812554850309
 model: google/gemini-2.5-flash
 fallback_models: [ollama/qwen3:14b]
 prompt: "Let's take a look at the key movements in Taiwan and US markets"
 tools:
+  - "get_market_prices"
   - "web_search"
 persona: stock_market_analyst

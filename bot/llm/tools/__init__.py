@@ -8,6 +8,7 @@ from .registry import (
 )
 from .web_search import WEB_SEARCH_SCHEMA, WEB_FETCH_SCHEMA, format_web_search_results
 from .visuals_core import VISUALS_CORE_SCHEMA, generate_visualization
+from .yahoo_finance import YAHOO_FINANCE_SCHEMA, get_market_prices
 
 __all__ = [
     "get_openai_tools",
@@ -21,4 +22,6 @@ __all__ = [
     "format_web_search_results",
     "VISUALS_CORE_SCHEMA",
     "generate_visualization",
+    "YAHOO_FINANCE_SCHEMA",
+    "get_market_prices",
 ]

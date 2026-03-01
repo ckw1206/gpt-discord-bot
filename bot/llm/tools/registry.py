@@ -27,6 +27,7 @@ from .web_search import (
     format_web_search_results,
 )
 from .visuals_core import VISUALS_CORE_SCHEMA, generate_visualization
+from .yahoo_finance import YAHOO_FINANCE_SCHEMA, get_market_prices
 
 
 # ── ToolEntry ─────────────────────────────────────────────────────────────────
@@ -80,6 +81,10 @@ _ENTRIES: dict[str, ToolEntry] = {
     "visuals_core": ToolEntry(
         schema=VISUALS_CORE_SCHEMA,
         fn=_visuals_core,
+    ),
+    "get_market_prices": ToolEntry(
+        schema=YAHOO_FINANCE_SCHEMA,
+        fn=get_market_prices,
     ),
 }
 
