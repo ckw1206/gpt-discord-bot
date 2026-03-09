@@ -611,3 +611,14 @@ def google_tools_wrapper(
         return get_user_events(count=count, calendar_id=calendar_id)
     else:
         return f"Error: Unknown action '{action}'. Use 'get_emails', 'get_email_content', or 'get_events'"
+
+
+# ── Dynamic tool registration ────────────────────────────────────────────────
+
+from bot.llm.tools._types import ToolEntry
+
+TOOL_NAME = "google_tools"
+TOOL_ENTRY = ToolEntry(
+    schema=GOOGLE_TOOLS_SCHEMA,
+    fn=google_tools_wrapper,
+)
