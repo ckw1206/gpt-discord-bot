@@ -586,9 +586,30 @@ async def on_message(new_msg: discord.Message) -> None:
                             try:
                                 audio_resp = await httpx_client.get(va.url)
                                 if audio_resp.status_code == 200:
-                                    transcribed = stt_service.transcribe(audio_resp.content)
+                                    # Convert OGG (Opus) to WAV for Azure STT compatibility
+                                    try:
+                                        from pydub import AudioSegment
+                                        import io
+                                        logging.info(f"STT: Starting OGG conversion, input size={len(audio_resp.content)} bytes")
+                                        audio = AudioSegment.from_ogg(io.BytesIO(audio_resp.content))
+                                        frame_rate = getattr(audio, 'frame_rate', None) or getattr(audio, 'sample_rate', 44100)
+                                        logging.info(f"STT: Original audio - channels={audio.channels}, frame_rate={frame_rate}, duration={len(audio)/1000}s")
+                                        # Convert to 16kHz mono 16-bit for Azure STT
+                                        audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
+                                        wav_io = io.BytesIO()
+                                        audio.export(wav_io, format="wav", codec="pcm_s16le")
+                                        audio_bytes = wav_io.getvalue()
+                                        logging.info(f"STT: Converted audio size={len(audio_bytes)} bytes")
+                                    except Exception as conv_err:
+                                        logging.error(f"Audio conversion failed: {conv_err}, trying raw")
+                                        audio_bytes = audio_resp.content
+                                    
+                                    # Transcribe with Chinese language for better recognition
+                                    transcribed = stt_service.transcribe(audio_bytes, language="zh-TW")
                                     if transcribed:
-                                        voice_transcriptions.append(f"[Voice message: {transcribed}]")
+                                        voice_transcriptions.append(transcribed)
+                                    else:
+                                        logging.warning(f"Empty transcription for voice message from {new_msg.author.id}")
                             except Exception as e:
                                 logging.warning(f"Failed to transcribe voice message: {e}")
                     else:

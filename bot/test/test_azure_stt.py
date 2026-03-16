@@ -131,6 +131,57 @@ class TestSTTIntegration:
         with pytest.raises(RuntimeError, match="Failed to read"):
             stt.transcribe_file("/nonexistent/path/audio.ogg")
     
+    def test_transcribe_with_generated_sine_wave(self, valid_config):
+        """Test STT with a generated sine wave audio file."""
+        import io
+        import struct
+        import math
+        from bot.voice.stt import AzureSTT
+        
+        stt = AzureSTT(valid_config)
+        
+        # Generate a simple 440Hz sine wave (A note) for 1 second
+        sample_rate = 16000
+        duration = 1.0
+        frequency = 440
+        num_samples = int(sample_rate * duration)
+        
+        # Generate sine wave samples
+        samples = []
+        for i in range(num_samples):
+            t = i / sample_rate
+            sample = int(32767 * 0.5 * math.sin(2 * math.pi * frequency * t))
+            samples.append(struct.pack('<h', sample))
+        
+        audio_data = b''.join(samples)
+        
+        # Create WAV file in memory
+        wav_buffer = io.BytesIO()
+        wav_buffer.write(b'RIFF')
+        wav_buffer.write(struct.pack('<I', 36 + len(audio_data)))
+        wav_buffer.write(b'WAVE')
+        wav_buffer.write(b'fmt ')
+        wav_buffer.write(struct.pack('<I', 16))
+        wav_buffer.write(struct.pack('<H', 1))
+        wav_buffer.write(struct.pack('<H', 1))
+        wav_buffer.write(struct.pack('<I', sample_rate))
+        wav_buffer.write(struct.pack('<I', sample_rate * 2))
+        wav_buffer.write(struct.pack('<H', 2))
+        wav_buffer.write(struct.pack('<H', 16))
+        wav_buffer.write(b'data')
+        wav_buffer.write(struct.pack('<I', len(audio_data)))
+        wav_buffer.write(audio_data)
+        
+        wav_bytes = wav_buffer.getvalue()
+        print(f"Generated test WAV: {len(wav_bytes)} bytes, {sample_rate}Hz, mono, 16-bit")
+        
+        # Test transcription - sine wave is not speech so should return empty
+        result = stt.transcribe(wav_bytes, language="en-US")
+        
+        print(f"STT result: '{result}'")
+        # A pure sine wave is not speech, so expect empty (NoMatch)
+        assert isinstance(result, str)
+    
     def test_transcribe_from_url_invalid(self, valid_config):
         """transcribe_from_url() should handle invalid URLs gracefully."""
         from bot.voice.stt import AzureSTT

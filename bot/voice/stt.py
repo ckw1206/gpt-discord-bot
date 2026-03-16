@@ -55,6 +55,9 @@ class AzureSTT:
             region=config.region
         )
         
+        # Set output format for better recognition
+        self._speech_config.output_format = speech.OutputFormat.Detailed
+        
         if config.endpoint:
             self._speech_config.endpoint = config.endpoint
     
@@ -72,8 +75,31 @@ class AzureSTT:
         Raises:
             RuntimeError: If transcription fails
         """
-        # Create audio input from bytes
-        audio_stream = speech.audio.PushAudioInputStream()
+        logger.info(f"STT: Starting transcription, audio size={len(audio_bytes)} bytes, language={language}")
+        
+        # Create a FRESH speech config for each transcription to avoid language state issues
+        speech_config = speech.SpeechConfig(
+            subscription=self.config.key,
+            region=self.config.region
+        )
+        speech_config.output_format = speech.OutputFormat.Detailed
+        
+        if self.config.endpoint:
+            speech_config.endpoint = self.config.endpoint
+        
+        # Set language on the fresh config BEFORE creating recognizer
+        if language:
+            speech_config.speech_recognition_language = language
+            logger.info(f"STT: Language set to {language}")
+        
+        # Create audio input from bytes - specify format for 16kHz mono WAV
+        audio_stream = speech.audio.PushAudioInputStream(
+            speech.audio.AudioStreamFormat(
+                samples_per_second=16000,
+                channels=1,
+                bits_per_sample=16
+            )
+        )
         
         # Write audio data to stream
         audio_stream.write(audio_bytes)
@@ -81,23 +107,26 @@ class AzureSTT:
         
         audio_config = speech.audio.AudioConfig(stream=audio_stream)
         
-        # Create recognizer
+        # Create recognizer with the fresh config
         recognizer = speech.SpeechRecognizer(
-            speech_config=self._speech_config,
+            speech_config=speech_config,
             audio_config=audio_config
         )
         
-        # Set language if specified
+        # Also set language on recognizer to be sure
         if language:
             recognizer.speech_recognition_language = language
         
         # Synchronous recognition
         result = recognizer.recognize_once()
         
+        logger.info(f"STT: Result reason={result.reason}, text='{result.text if result.text else ''}'")
+        
         if result.reason == speech.ResultReason.RecognizedSpeech:
             return result.text
         elif result.reason == speech.ResultReason.NoMatch:
-            logger.warning("No speech recognized in audio")
+            no_match_details = result.no_match_details
+            logger.warning(f"No speech recognized in audio. NoMatch details: {no_match_details}")
             return ""
         elif result.reason == speech.ResultReason.Canceled:
             cancellation = result.cancellation_details
@@ -145,31 +174,18 @@ class AzureSTT:
         Raises:
             RuntimeError: If transcription fails
         """
-        audio_config = speech.audio.AudioConfig.from_wav_file_input(url)
+        import urllib.request
         
-        recognizer = speech.SpeechRecognizer(
-            speech_config=self._speech_config,
-            audio_config=audio_config
-        )
+        try:
+            with urllib.request.urlopen(url) as response:
+                audio_bytes = response.read()
+        except Exception as e:
+            raise RuntimeError(f"Failed to download audio from URL: {e}")
         
-        if language:
-            recognizer.speech_recognition_language = language
-        
-        result = recognizer.recognize_once()
-        
-        if result.reason == speech.ResultReason.RecognizedSpeech:
-            return result.text
-        elif result.reason == speech.ResultReason.NoMatch:
-            logger.warning("No speech recognized in audio from URL")
-            return ""
-        elif result.reason == speech.ResultReason.Canceled:
-            cancellation = result.cancellation_details
-            raise RuntimeError(f"STT cancelled: {cancellation.reason}")
-        else:
-            raise RuntimeError(f"STT failed with reason: {result.reason}")
+        return self.transcribe(audio_bytes, language)
 
 
-def create_stt(config: VoiceConfig) -> Optional[AzureSTT]:
+def create_stt(config: Optional[VoiceConfig]) -> Optional[AzureSTT]:
     """
     Factory function to create AzureSTT instance.
     
@@ -180,11 +196,10 @@ def create_stt(config: VoiceConfig) -> Optional[AzureSTT]:
         AzureSTT instance if config is valid, None otherwise
     """
     if not config or not config.is_configured:
-        logger.warning("Azure Speech not configured - STT disabled")
         return None
     
     try:
         return AzureSTT(config)
     except Exception as e:
-        logger.error(f"Failed to initialize Azure STT: {e}")
+        logger.error(f"Failed to create AzureSTT: {e}")
         return None

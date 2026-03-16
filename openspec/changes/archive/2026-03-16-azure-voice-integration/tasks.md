@@ -44,6 +44,6 @@
 
 ## 6. Final Validation
 
-- [ ] 6.1 Run full test suite
-- [ ] 6.2 Manual testing of all voice features
-- [ ] 6.3 Archive change in OpenSpec
+- [x] 6.1 Run full test suite
+- [x] 6.2 Manual testing of all voice features
+- [x] 6.3 Archive change in OpenSpec

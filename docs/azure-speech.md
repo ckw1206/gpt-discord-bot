@@ -41,6 +41,15 @@ Popular English voices:
 - `en-GB-SoniaNeural` - Female, British
 - `en-AU-NatashaNeural` - Female, Australian
 
+**Chinese voices (use when speaking Chinese/Taiwanese):**
+- `zh-CN-XiaoxiaoNeural` - Female, Mandarin Chinese (recommended)
+- `zh-CN-YunxiNeural` - Male, Mandarin Chinese
+- `zh-TW-HsiaoChenNeural` - Female, Taiwanese Mandarin
+- `zh-TW-YunJheNeural` - Male, Taiwanese Mandarin
+- `zh-HK-HiuMaanNeural` - Female, Hong Kong Cantonese
+
+> **Tip:** The bot automatically detects the voice locale (e.g., `zh-CN` from `zh-CN-XiaoxiaoNeural`) and sets the correct language for TTS. Use `zh-CN` voices for Simplified Chinese, `zh-TW` for Traditional Chinese (Taiwan), or `zh-HK` for Cantonese.
+
 ## Speaking Styles
 
 Available styles vary by voice, but common ones include:
@@ -68,6 +77,18 @@ When Azure Speech is configured, the bot can also:
 - **Transcribe voice messages** sent in text channels or DMs
 - Process audio attachments automatically
 
+The STT service:
+- Automatically uses Chinese language (zh-TW) for better recognition of Chinese speech
+- Converts Discord voice messages (OGG format) to the required 16kHz mono WAV format
+- Returns Chinese characters instead of romanization (e.g., "你好" not "NI hao")
+
+### Voice Message Requirements
+
+For best transcription results:
+- Use clear, natural speech
+- Avoid background noise
+- Chinese voice messages work best with zh-TW locale voices
+
 ## Testing
 
 Test your TTS configuration by:
@@ -76,9 +97,27 @@ Test your TTS configuration by:
 
 The bot should speak the text aloud in the voice channel.
 
+Test your STT configuration by:
+1. Sending a voice message in a text channel or DM
+2. The bot should transcribe and respond to the content
+
+## Enabling/Disabling Voice Features
+
+Voice features (TTS and STT) are automatically enabled when valid credentials are provided. To toggle on/off:
+
+| Method | How to Enable | How to Disable |
+|--------|---------------|----------------|
+| **Set credentials** | `key` and `region` both set | Leave both empty or comment out |
+| **Use environment variables** | Set `AZURE_SPEECH_KEY` and `AZURE_SPEECH_REGION` env vars | Unset the env vars |
+| **Config file** | `key: "your-key"`<br>`region: "eastus"` | `key: ""`<br>`region: ""` |
+
+The bot checks `is_configured` which returns `True` only when both `key` and `region` are present and not empty.
+
 ## Troubleshooting
 
 - **"TTS is not configured"**: Ensure `key` and `region` are set in config.yaml
 - **Authentication errors**: Verify your Azure key is correct
 - **Region mismatch**: Ensure the region matches your Speech resource's location
 - **Bot can't join voice**: Check that the bot has "Connect" and "Speak" permissions in the voice channel
+- **STT returns wrong language**: Ensure the voice message is clear and use zh-TW locale voices for Chinese
+- **STT returns romanization**: This happens with auto-detect; the bot now explicitly sets zh-TW for Chinese speech
