@@ -3,7 +3,9 @@ import axios from 'axios'
 import yaml from 'js-yaml'
 import { toast } from 'react-hot-toast'
 import Modal from './Modal'
-import { ArrowLeftIcon, TrashIcon } from '@heroicons/react/24/outline'
+import { ArrowLeft, Trash2 } from 'lucide-react'
+import { Button } from './ui/button'
+import { Input } from './ui/input'
 
 const API_BASE = '/api'
 
@@ -251,75 +253,71 @@ export default function TaskEditor({ token, taskName, onSave, onSaveWithName, on
   }
 
   if (loading) {
-    return <div style={{ padding: '2rem' }}>Loading task...</div>
+    return <div className="p-8">Loading task...</div>
   }
 
   return (
-    <div ref={containerRef} style={{ padding: '1rem', display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div ref={containerRef} className="p-4 flex flex-col h-full">
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <button 
-            onClick={onCancel}
-            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem' }}
-          >
-            <ArrowLeftIcon style={{ width: '1.25rem', height: '1.25rem' }} />
-          </button>
-          <h2 style={{ margin: 0 }}>
+      <div className="flex justify-between items-center mb-4">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" onClick={onCancel}>
+            <ArrowLeft className="w-5 h-5" />
+          </Button>
+          <h2 className="text-xl font-semibold m-0">
             {originalName ? `Edit: ${originalName}` : 'New Task'}
           </h2>
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div className="flex gap-2">
           {originalName && (
-            <button 
+            <Button 
+              variant="destructive"
               onClick={() => setShowDeleteModal(true)}
-              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', backgroundColor: '#dc2626' }}
             >
-              <TrashIcon style={{ width: '1rem', height: '1rem' }} />
+              <Trash2 className="w-4 h-4 mr-2" />
               Delete
-            </button>
+            </Button>
           )}
-          <button 
+          <Button 
             onClick={handleSave}
             disabled={saving || !name}
-            style={{ backgroundColor: '#22c55e', opacity: saving || !name ? 0.5 : 1 }}
           >
             {saving ? 'Saving...' : 'Save'}
-          </button>
+          </Button>
         </div>
       </div>
 
       {/* Name input */}
-      <div style={{ marginBottom: '1rem' }}>
-        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+      <div className="mb-4">
+        <label className="block mb-2 font-bold">
           Task Name
         </label>
-        <input
+        <Input
           type="text"
           value={name}
           onChange={(e) => handleNameChange(e.target.value)}
           placeholder="task-name"
-          style={{ width: '100%', maxWidth: '400px' }}
+          className="max-w-[400px]"
         />
-        <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
+        <p className="text-sm text-muted-foreground mt-1">
           Only lowercase letters, numbers, and hyphens allowed
         </p>
       </div>
 
       {/* YAML Editor */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+      <div className="flex-1 flex flex-col min-h-0">
+        <label className="block mb-2 font-bold">
           YAML Configuration
           {validationError && (
-            <span style={{ color: '#ff6b6b', fontWeight: 'normal', marginLeft: '0.5rem' }}>
+            <span className="text-red-400 font-normal ml-2">
               - {validationError}
             </span>
           )}
         </label>
         {/* Editor and help side by side */}
-        <div style={{ flex: 1, display: 'flex', gap: '1rem', minHeight: 0 }}>
+        <div className="flex-1 flex gap-4 min-h-0">
           {/* Editor container - flexbox auto-resize */}
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <div className="flex-1 flex flex-col min-h-0">
             <textarea
               value={configText}
               onChange={(e) => {
@@ -327,24 +325,16 @@ export default function TaskEditor({ token, taskName, onSave, onSaveWithName, on
                 setValidationError(null)
               }}
               placeholder="name: my-task&#10;enabled: true&#10;cron: '0 * * * *'&#10;..."
+              className="flex-1 min-h-[200px] font-mono text-sm p-4 bg-background text-foreground border rounded-lg resize-none"
               style={{
-                flex: 1,
-                minHeight: '200px',
-                fontFamily: 'monospace',
-                fontSize: '0.9rem',
-                padding: '1rem',
-                backgroundColor: '#1a1a1a',
-                color: '#ddd',
-                border: `1px solid ${validationError ? '#ff6b6b' : '#444'}`,
-                borderRadius: '8px',
-                resize: 'none'
+                borderColor: validationError ? '#ff6b6b' : undefined
               }}
             />
           </div>
           {/* Help text - right side */}
-          <div style={{ width: '280px', padding: '1rem', backgroundColor: '#252525', borderRadius: '8px', fontSize: '0.85rem', flexShrink: 0, overflow: 'auto' }}>
+          <div className="w-[280px] p-4 bg-secondary rounded-lg text-sm flex-shrink-0 overflow-auto">
             <strong>Task Fields:</strong>
-            <ul style={{ margin: '0.5rem 0 0 0', paddingLeft: '1.5rem' }}>
+            <ul className="mt-2 pl-6">
               <li><code>name</code> - Task identifier</li>
               <li><code>enabled</code> - true/false to enable/disable</li>
               <li><code>cron</code> - Cron schedule (e.g., "0 * * * *" = every hour)</li>

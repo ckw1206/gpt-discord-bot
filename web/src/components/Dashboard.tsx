@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../App'
 import axios from 'axios'
-import { ArrowPathIcon } from '@heroicons/react/24/outline'
+import { RefreshCw } from 'lucide-react'
+import { Button } from './ui/button'
 import LogViewer from './LogViewer'
 import ConfigEditor from './ConfigEditor'
 import ServerList from './ServerList'
@@ -42,11 +43,9 @@ function getInitialTab(): 'dashboard' | 'config' | 'servers' | 'personas' | 'tas
 }
 
 interface DashboardProps {
-  onOpenServer?: (serverId: string) => void
-  onCloseServer?: () => void
 }
 
-export default function Dashboard({ onOpenServer, onCloseServer }: DashboardProps) {
+export default function Dashboard({ }: DashboardProps) {
   const { token, setToken } = useAuth()
   const [activeTab, setActiveTab] = useState<'dashboard' | 'config' | 'servers' | 'personas' | 'tasks' | 'skills'>(getInitialTab)
   const [status, setStatus] = useState<BotStatus | null>(null)
@@ -74,10 +73,6 @@ export default function Dashboard({ onOpenServer, onCloseServer }: DashboardProp
     // Reset TaskList expanded state by changing key
     if (tab === 'tasks') {
       setTasksKey(k => k + 1)
-    }
-    // Close server drawer if switching away from servers tab
-    if (tab !== 'servers' && onCloseServer) {
-      onCloseServer()
     }
     setActiveTab(tab)
     localStorage.setItem(STORAGE_KEY, tab)
@@ -113,79 +108,42 @@ export default function Dashboard({ onOpenServer, onCloseServer }: DashboardProp
   }
 
   return (
-    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
+    <div className="flex h-screen overflow-hidden">
       <Sidebar 
         activeTab={activeTab} 
         onTabChange={handleTabChange} 
         onLogout={handleLogout} 
       />
 
-      <main style={{ 
-        flex: 1, 
-        marginLeft: '200px', 
-        padding: '1.5rem',
-        maxWidth: 'calc(100% - 200px)',
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100vh',
-        overflow: 'hidden',
-        boxSizing: 'border-box'
-      }}>
+      <main className="flex-1 ml-[200px] p-6 max-w-[calc(100%-200px)] flex flex-col h-screen overflow-hidden box-border">
         {/* Dashboard: Show status + logs as widgets - combined into one view */}
         {activeTab === 'dashboard' && token && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+          <div className="flex flex-col gap-4 flex-1 min-h-0 overflow-hidden">
             {/* Status + Quick Actions combined card */}
-            <div style={{ 
-              backgroundColor: '#1a1a1a', 
-              borderRadius: '8px', 
-              padding: '1rem',
-              flexShrink: 0,
-              display: 'flex',
-              gap: '1.5rem',
-              alignItems: 'center'
-            }}>
+            <div className="bg-card rounded-lg p-4 flex-shrink-0 flex gap-6 items-center">
               {/* Avatar on the left with status indicator */}
-              <div style={{ position: 'relative', flexShrink: 0 }}>
+              <div className="relative flex-shrink-0">
                 {status?.avatar_url ? (
                   <img 
                     src={status.avatar_url} 
                     alt={`${status.user_name} avatar`}
-                    style={{ width: '60px', height: '60px', borderRadius: '50%' }}
+                    className="w-[60px] h-[60px] rounded-full"
                   />
                 ) : (
-                  <div 
-                    style={{ 
-                      width: '60px', 
-                      height: '60px', 
-                      borderRadius: '50%', 
-                      backgroundColor: '#333',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '1.5rem'
-                    }}
-                  >
+                  <div className="w-[60px] h-[60px] rounded-full bg-muted flex items-center justify-content text-2xl">
                     🤖
                   </div>
                 )}
                 {/* Status indicator dot at bottom-right of avatar */}
                 <span 
-                  style={{
-                    position: 'absolute',
-                    bottom: '2px',
-                    right: '2px',
-                    width: '12px',
-                    height: '12px',
-                    borderRadius: '50%',
-                    backgroundColor: status?.online ? '#22c55e' : '#6b7280',
-                    border: '2px solid #1a1a1a'
-                  }}
+                  className="absolute bottom-0.5 right-0.5 w-3 h-3 rounded-full border-2 border-background"
+                  style={{ backgroundColor: status?.online ? '#22c55e' : '#6b7280' }}
                   title={status?.online ? 'Online' : 'Offline'}
                 />
               </div>
               
               {/* Info in the middle */}
-              <div style={{ flex: 1, display: 'flex', gap: '1.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <div className="flex-1 flex gap-6 flex-wrap items-center">
                 {status?.status_message && (
                   <span><strong>Mood:</strong> {status.status_message}</span>
                 )}
@@ -195,32 +153,32 @@ export default function Dashboard({ onOpenServer, onCloseServer }: DashboardProp
               </div>
 
               {/* Quick Actions on the right */}
-              <button onClick={fetchStatus} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
-                <ArrowPathIcon style={{ width: '1rem', height: '1rem' }} />
+              <Button variant="outline" size="sm" onClick={fetchStatus} className="flex-shrink-0">
+                <RefreshCw className="w-4 h-4 mr-2" />
                 Refresh
-              </button>
+              </Button>
             </div>
             
             {/* Real-time Logs Widget - fills remaining space */}
-            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
               <LogViewer token={token} />
             </div>
           </div>
         )}
 
         {activeTab === 'config' && token && (
-          <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+          <div className="flex-1 min-h-0 overflow-auto">
             <ConfigEditor token={token} />
           </div>
         )}
         {activeTab === 'servers' && token && (
-          <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-            <ServerList token={token} onOpenServer={onOpenServer} />
+          <div className="flex-1 min-h-0 overflow-auto">
+            <ServerList token={token} />
           </div>
         )}
         {activeTab === 'personas' && token && (
           editingPersona !== null ? (
-            <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+            <div className="flex-1 min-h-0 overflow-auto">
               <PersonaEditor
                 token={token}
                 personaName={editingPersona || undefined}
@@ -230,7 +188,7 @@ export default function Dashboard({ onOpenServer, onCloseServer }: DashboardProp
               />
             </div>
           ) : (
-            <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+            <div className="flex-1 min-h-0 overflow-auto">
               <PersonaList
                 token={token}
                 onSelectPersona={(name) => setEditingPersona(name)}
@@ -242,7 +200,7 @@ export default function Dashboard({ onOpenServer, onCloseServer }: DashboardProp
 
         {activeTab === 'tasks' && token && (
           editingTask !== undefined && editingTask !== null ? (
-            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+            <div className="flex-1 min-h-0 overflow-hidden">
               <TaskEditor
                 token={token}
                 taskName={editingTask === '' ? undefined : editingTask}
@@ -252,7 +210,7 @@ export default function Dashboard({ onOpenServer, onCloseServer }: DashboardProp
               />
             </div>
           ) : (
-            <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+            <div className="flex-1 min-h-0 overflow-auto">
               <TaskList 
                 key={tasksKey}
                 token={token} 
@@ -264,7 +222,7 @@ export default function Dashboard({ onOpenServer, onCloseServer }: DashboardProp
         )}
 
         {activeTab === 'skills' && token && (
-          <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+          <div className="flex-1 min-h-0 overflow-auto">
             <SkillsList token={token} />
           </div>
         )}

@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
+import { X } from 'lucide-react'
+import { Button } from './ui/button'
 
 const API_BASE = '/api'
 
@@ -103,68 +105,31 @@ export default function ServerDrawer({ serverId, token, onClose }: ServerDrawerP
       {/* Backdrop */}
       <div
         onClick={onClose}
-        style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
-          zIndex: 999,
-        }}
+        className="fixed inset-0 bg-black/30 z-[999]"
       />
 
       {/* Drawer */}
       <div
-        style={{
-          position: 'fixed',
-          top: 0,
-          right: 0,
-          width: '500px',
-          maxWidth: '100%',
-          height: '100vh',
-          backgroundColor: '#1a1a1a',
-          boxShadow: '-4px 0 20px rgba(0, 0, 0, 0.3)',
-          zIndex: 1000,
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-        }}
+        className="fixed top-0 right-0 w-[500px] max-w-full h-screen bg-background shadow-[-4px_0_20px_rgba(0,0,0,0.3)] z-[1000] flex flex-col overflow-hidden"
       >
         {/* Header */}
         <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            padding: '1rem',
-            borderBottom: '1px solid #333',
-          }}
+          className="flex justify-between items-center p-4 border-b"
         >
-          <h2 style={{ margin: 0, fontSize: '1.2rem' }}>
+          <h2 className="m-0 text-xl">
             {server?.name || (loading ? 'Loading...' : 'Server Details')}
           </h2>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: '#fff',
-              fontSize: '1.5rem',
-              cursor: 'pointer',
-              padding: '0.25rem 0.5rem',
-            }}
-          >
-            ✕
-          </button>
+          <Button variant="ghost" size="icon" onClick={onClose}>
+            <X className="w-5 h-5" />
+          </Button>
         </div>
 
         {/* Content */}
-        <div style={{ flex: 1, overflow: 'auto', padding: '1rem' }}>
+        <div className="flex-1 overflow-auto p-4">
           {loading && <div>Loading...</div>}
           
           {error && (
-            <div style={{ color: '#ff6b6b', padding: '1rem' }}>
+            <div className="text-red-400 p-4">
               {error}
             </div>
           )}
@@ -172,84 +137,63 @@ export default function ServerDrawer({ serverId, token, onClose }: ServerDrawerP
           {server && !loading && !error && (
             <>
               {/* Server Info */}
-              <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <div className="mb-4 flex items-center gap-4">
                 {server.icon ? (
                   <img
                     src={server.icon}
                     alt={server.name}
-                    style={{ width: '48px', height: '48px', borderRadius: '50%' }}
+                    className="w-12 h-12 rounded-full"
                   />
                 ) : (
                   <div
-                    style={{
-                      width: '48px',
-                      height: '48px',
-                      borderRadius: '50%',
-                      backgroundColor: '#646cff',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '1.5rem',
-                    }}
+                    className="w-12 h-12 rounded-full bg-primary flex items-center justify-content text-xl"
                   >
                     {server.name.charAt(0).toUpperCase()}
                   </div>
                 )}
                 <div>
-                  <p style={{ margin: 0 }}><strong>Members:</strong> {server.member_count}</p>
-                  <p style={{ margin: 0 }}><strong>Channels:</strong> {server.channel_count}</p>
+                  <p className="m-0"><strong>Members:</strong> {server.member_count}</p>
+                  <p className="m-0"><strong>Channels:</strong> {server.channel_count}</p>
                 </div>
               </div>
 
               {/* Tabs */}
-              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+              <div className="flex gap-2 mb-4">
                 {(['members', 'channels', 'permissions'] as const).map((tab) => (
-                  <button
+                  <Button
                     key={tab}
+                    variant={activeTab === tab ? 'default' : 'outline'}
                     onClick={() => setActiveTab(tab)}
-                    style={{
-                      padding: '0.5rem 1rem',
-                      backgroundColor: activeTab === tab ? '#646cff' : '#333',
-                      border: 'none',
-                      borderRadius: '4px',
-                      color: '#fff',
-                      cursor: 'pointer',
-                      textTransform: 'capitalize',
-                    }}
+                    className="capitalize"
                   >
                     {tab}
-                  </button>
+                  </Button>
                 ))}
               </div>
 
               {/* Tab Content */}
               {activeTab === 'members' && (
-                <div style={{ maxHeight: '300px', overflow: 'auto' }}>
+                <div className="max-h-[300px] overflow-auto">
                   {server.members.length === 0 ? (
                     <p>No members found</p>
                   ) : (
-                    <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                    <ul className="list-none p-0 m-0">
                       {server.members.slice(0, 50).map((member) => (
                         <li
                           key={member.id}
-                          style={{
-                            padding: '0.5rem',
-                            borderBottom: '1px solid #333',
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                          }}
+                          className="p-2 border-b flex justify-between"
                         >
                           <span>
                             {member.display_name || member.username}
-                            {member.is_owner && <span style={{ color: '#ffd700' }}> 👑</span>}
+                            {member.is_owner && <span className="text-yellow-500"> 👑</span>}
                           </span>
-                          <span style={{ color: '#888', fontSize: '0.8rem' }}>
+                          <span className="text-muted-foreground text-sm">
                             @{member.username}
                           </span>
                         </li>
                       ))}
                       {server.members.length > 50 && (
-                        <li style={{ padding: '0.5rem', color: '#888' }}>
+                        <li className="p-2 text-muted-foreground">
                           ...and {server.members.length - 50} more
                         </li>
                       )}
@@ -259,24 +203,21 @@ export default function ServerDrawer({ serverId, token, onClose }: ServerDrawerP
               )}
 
               {activeTab === 'channels' && (
-                <div style={{ maxHeight: '300px', overflow: 'auto' }}>
+                <div className="max-h-[300px] overflow-auto">
                   {server.channels.length === 0 ? (
                     <p>No channels found</p>
                   ) : (
-                    <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                    <ul className="list-none p-0 m-0">
                       {server.channels.map((channel) => (
                         <li
                           key={channel.id}
-                          style={{
-                            padding: '0.5rem',
-                            borderBottom: '1px solid #333',
-                          }}
+                          className="p-2 border-b"
                         >
-                          <span style={{ color: '#888', marginRight: '0.5rem' }}>
+                          <span className="text-muted-foreground mr-2">
                             #{channel.id}
                           </span>
                           {channel.name}
-                          <span style={{ color: '#666', fontSize: '0.8rem', marginLeft: '0.5rem' }}>
+                          <span className="text-muted-foreground text-sm ml-2">
                             ({channel.type})
                           </span>
                         </li>
@@ -290,47 +231,32 @@ export default function ServerDrawer({ serverId, token, onClose }: ServerDrawerP
                 <div>
                   {permissionMessage && (
                     <div
+                      className="p-2 mb-4 rounded"
                       style={{
-                        padding: '0.5rem',
-                        marginBottom: '1rem',
                         backgroundColor: permissionMessage.startsWith('Error') ? '#ff6b6b22' : '#22c55e22',
-                        borderRadius: '4px',
                         color: permissionMessage.startsWith('Error') ? '#ff6b6b' : '#22c55e',
                       }}
                     >
                       {permissionMessage}
                     </div>
                   )}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.5rem' }}>
+                  <div className="grid grid-cols-[1fr_auto] gap-2">
                     {Object.entries(server.permissions).map(([perm, value]) => (
                       <div
                         key={perm}
-                        style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          padding: '0.5rem',
-                          backgroundColor: '#252525',
-                          borderRadius: '4px',
-                        }}
+                        className="flex justify-between items-center p-2 bg-secondary rounded"
                       >
-                        <span style={{ textTransform: 'capitalize', fontSize: '0.9rem' }}>
+                        <span className="capitalize text-sm">
                           {perm.replace(/_/g, ' ')}
                         </span>
-                        <button
+                        <Button
+                          size="sm"
+                          variant="outline"
                           onClick={() => updatePermission(perm, !value)}
-                          style={{
-                            padding: '0.25rem 0.5rem',
-                            fontSize: '0.8rem',
-                            backgroundColor: value ? '#22c55e' : '#666',
-                            border: 'none',
-                            borderRadius: '4px',
-                            color: '#fff',
-                            cursor: 'pointer',
-                          }}
+                          className={value ? "text-green-500" : "text-muted-foreground"}
                         >
                           {value ? 'Revoke' : 'Grant'}
-                        </button>
+                        </Button>
                       </div>
                     ))}
                   </div>

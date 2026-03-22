@@ -1,4 +1,7 @@
-## ADDED Requirements
+## Purpose
+Store and query event logs in SQLite database for debugging and analytics.
+
+## Requirements
 
 ### Requirement: Event logs persisted to database
 The system SHALL store event logs in SQLite database for query and retention.

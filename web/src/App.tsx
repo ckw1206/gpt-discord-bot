@@ -32,17 +32,13 @@ function AppContent() {
   const [searchParams, setSearchParams] = useSearchParams()
   const selectedServerId = searchParams.get('server')
 
-  const openServerDrawer = (serverId: string) => {
-    setSearchParams({ server: serverId })
-  }
-
   const closeServerDrawer = () => {
     setSearchParams({})
   }
 
   return (
     <>
-      <Dashboard onOpenServer={openServerDrawer} onCloseServer={closeServerDrawer} />
+      <Dashboard />
       {selectedServerId && token && (
         <ServerDrawer
           serverId={selectedServerId}

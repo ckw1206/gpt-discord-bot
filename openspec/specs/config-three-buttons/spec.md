@@ -3,7 +3,11 @@
 ## Purpose
 Adds Save, Apply, and Save&Apply buttons to the config page for proper config management.
 
-## ADDED Requirements
+## UI Reference
+
+Button styles and colors follow [web-portal/UI_CONVENTIONS.md](../web-portal/UI_CONVENTIONS.md). This spec defines the **behavioral semantics** (what each button does), while UI_CONVENTIONS defines visual standards.
+
+## Requirements
 
 ### Requirement: Save button writes to config.yaml
 The system SHALL provide a Save button that writes configuration changes to config.yaml file without reloading the bot.

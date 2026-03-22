@@ -3,7 +3,11 @@
 ## Purpose
 Enables CRUD operations for scheduled tasks, YAML editing, and manual task execution.
 
-## ADDED Requirements
+## UI Patterns
+
+UI patterns (buttons, notifications, icons, input fields) follow [web-portal/UI_CONVENTIONS.md](../web-portal/UI_CONVENTIONS.md).
+
+## Requirements
 
 ### Requirement: List existing tasks
 The system SHALL provide an endpoint to list all available tasks with their full content.

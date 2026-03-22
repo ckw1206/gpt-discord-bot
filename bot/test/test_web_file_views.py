@@ -189,9 +189,8 @@ description: A test task
             # First arg should be run_scheduled_task, not call_llm_with_tools
             assert call_args[0][0].__name__ == "run_scheduled_task"
         finally:
-            # Restore sys.modules
-            sys.modules.clear()
-            sys.modules.update(original_modules)
+            # Restore sys.modules - only remove the mock module we added
+            sys.modules.pop('bot.llmcord', None)
 
     @pytest.mark.asyncio
     async def test_reload_single_task_disabled(self):
@@ -364,9 +363,8 @@ description: A test task
             # Verify add_job was called
             mock_scheduler.add_job.assert_called_once()
         finally:
-            # Restore sys.modules
-            sys.modules.clear()
-            sys.modules.update(original_modules)
+            # Restore sys.modules - only remove the mock module we added
+            sys.modules.pop('bot.llmcord', None)
 
     @pytest.mark.asyncio
     async def test_run_task_by_internal_name(self):
@@ -423,8 +421,8 @@ description: A test task
             assert "stock_market_check" in result["message"] or "queued" in result["message"]
             
         finally:
-            sys.modules.clear()
-            sys.modules.update(original_modules)
+            # Restore sys.modules - only remove the mock module we added
+            sys.modules.pop('bot.llmcord', None)
 
 
 class TestSkillsEndpoint:

@@ -22,10 +22,22 @@ SENSITIVE_FIELDS = {
 }
 
 # Fields that are editable via the API
+# Only new grouped keys (legacy keys auto-convert on load via normalization)
+# Legacy keys are for backward-compatible LOADING only, not editing
 EDITABLE_FIELDS = {
-    "status_message", "max_text", "max_images", "max_messages",
-    "use_plain_responses", "show_embed_color", "allow_dms",
-    "portal",  # Allow updating portal section
+    # Discord section
+    "discord.status_message", "discord.client_id", "discord.bot_token",
+    # Behavior section
+    "behavior.max_text", "behavior.max_images",
+    "behavior.max_messages", "behavior.use_plain_responses",
+    "behavior.show_embed_color", "behavior.allow_dms",
+    # LLM section
+    "llm.persona", "llm.system_prompt", "llm.fallback_models",
+    # Voice section
+    "voice.region", "voice.default_voice", "voice.key",
+    # Portal section (nested fields)
+    "portal.enabled", "portal.port", "portal.cors_origins", "portal.require_discord_admin",
+    "portal.logs.retention_days", "portal.logs.levels",
 }
 
 
@@ -38,6 +50,7 @@ def _is_sensitive_field(field_name: str) -> bool:
 def _filter_config(config: dict[str, Any], redact_sensitive: bool = True) -> dict[str, Any]:
     """
     Filter config to remove sensitive fields and prepare for API response.
+    Handles both new grouped structure and legacy flat keys.
     
     Args:
         config: The raw config dictionary
@@ -49,6 +62,10 @@ def _filter_config(config: dict[str, Any], redact_sensitive: bool = True) -> dic
         # Skip the entire portal section - it's handled separately
         if key == "portal" and redact_sensitive:
             continue
+        
+        # Handle legacy 'azure-speech' key - map to 'voice' for display
+        if key == "azure-speech":
+            key = "voice"
             
         if isinstance(value, dict):
             # Recursively filter nested dicts
@@ -102,8 +119,8 @@ def _format_for_display(config: dict[str, Any]) -> dict[str, Any]:
                     else:
                         tool_items.append(str(tool_name))
                 result[key] = ", ".join(tool_items) if tool_items else "None"
-            elif key == "azure-speech":
-                # Format azure-speech: show voice config keys
+            elif key in ("voice", "azure-speech"):
+                # Format voice config: show voice config keys
                 voice_keys = list(value.keys()) if value else []
                 result[key] = ", ".join(voice_keys) if voice_keys else "None"
             elif key == "fallback_models":
@@ -130,12 +147,14 @@ def _get_portal_config_safe() -> dict[str, Any]:
     """Get portal config for API (excludes sensitive fields)."""
     try:
         config = get_raw_config()
+        # Support both new 'portal' and legacy top-level portal keys
         portal = config.get("portal", {})
         
         # Extract safe fields
         return {
             "enabled": portal.get("enabled", False),
             "port": portal.get("port", 8080),
+            "cors_origins": portal.get("cors_origins", []),
             "logs": {
                 "retention_days": portal.get("logs", {}).get("retention_days", 7),
                 "levels": portal.get("logs", {}).get("levels", ["INFO", "WARNING", "ERROR"]),
@@ -165,8 +184,16 @@ class ConfigResponse(BaseModel):
     """Response model for config read."""
     config: dict[str, Any]
     portal: dict[str, Any]
+    voice: Optional[dict[str, Any]] = None
     editable_fields: list[str]
     read_only_fields: list[str]
+    # Structured LLM data for table editors (Task 9.2.7)
+    llm_providers: Optional[dict[str, Any]] = None
+    llm_models: Optional[dict[str, Any]] = None
+    # Discord config (for bot_token visibility toggle)
+    discord_config: Optional[dict[str, Any]] = None
+    # Full config for JSON mode (entire config.yaml with sensitive fields redacted)
+    full_config: Optional[dict[str, Any]] = None
 
 
 class ConfigUpdateResponse(BaseModel):
@@ -197,14 +224,31 @@ async def get_config() -> ConfigResponse:
         # Get portal config separately
         portal_config = _get_portal_config_safe()
         
+        # Get structured LLM data for table editors (Task 9.2.7)
+        # Extract providers and models with full structure (NOT redacted - needed for UI toggle)
+        llm_config = raw_config.get("llm", {})
+        llm_providers = llm_config.get("providers", {})
+        llm_models = llm_config.get("models", {})
+        
+        # Get discord config separately (for bot_token visibility)
+        discord_config = raw_config.get("discord", {})
+        
+        # Get voice config separately (for key visibility toggle)
+        voice_config = raw_config.get("voice", {})
+        
         return ConfigResponse(
             config=display_config,
             portal=portal_config,
+            voice=voice_config,  # Add voice config to response
             editable_fields=sorted(list(EDITABLE_FIELDS)),
             read_only_fields=sorted([
                 "providers", "models", "fallback_models", "tools",
-                "azure-speech", "permissions", "client_id"
+                "permissions"
             ]),
+            llm_providers=llm_providers,
+            llm_models=llm_models,
+            discord_config=discord_config,
+            full_config=filtered,  # Full config for JSON mode display
         )
     except Exception as e:
         logger.error(f"Error loading config: {e}")
@@ -238,6 +282,9 @@ async def update_config(
         # Apply updates
         updates_applied = []
         
+        # Fields that should be saved as lists
+        LIST_FIELDS = {"llm.fallback_models"}
+        
         # Handle array-based updates from frontend
         if update.fields:
             for field in update.fields:
@@ -251,6 +298,12 @@ async def update_config(
                         if part not in current:
                             current[part] = {}
                         current = current[part]
+                    
+                    # Handle list-type fields: convert comma-separated string to list
+                    if key in LIST_FIELDS and isinstance(value, str):
+                        # Frontend sends comma-separated string, convert to list
+                        value = [s.strip() for s in value.split(',') if s.strip()]
+                    
                     current[parts[-1]] = value
                     updates_applied.append(key)
         
@@ -331,6 +384,170 @@ async def update_config(
     except Exception as e:
         logger.error(f"Error updating config: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to update config: {str(e)}")
+
+
+class ProviderUpdateRequest(BaseModel):
+    """Request model for provider CRUD operations."""
+    action: str  # "add", "update", "delete"
+    name: str
+    data: Optional[dict[str, Any]] = None
+
+
+class ModelUpdateRequest(BaseModel):
+    """Request model for model CRUD operations."""
+    action: str  # "add", "update", "delete"
+    model_name: str
+    data: Optional[dict[str, Any]] = None
+
+
+@router.put("/config/providers", response_model=ConfigUpdateResponse)
+async def update_provider(
+    update: ProviderUpdateRequest,
+    current_user: Any = Depends(get_current_user),
+) -> ConfigUpdateResponse:
+    """
+    CRUD operations for LLM providers.
+    
+    - add: Add new provider (requires name and data)
+    - update: Update existing provider (requires name and data)
+    - delete: Delete provider (requires name only)
+    """
+    import yaml
+    
+    config_path = get_config_path()
+    
+    try:
+        # Load current config
+        with open(config_path, encoding="utf-8") as f:
+            current_config = yaml.safe_load(f) or {}
+        
+        # Ensure llm.providers exists
+        if "llm" not in current_config:
+            current_config["llm"] = {}
+        if "providers" not in current_config["llm"]:
+            current_config["llm"]["providers"] = {}
+        
+        providers = current_config["llm"]["providers"]
+        action = update.action.lower()
+        name = update.name
+        
+        if action == "add":
+            if name in providers:
+                raise HTTPException(status_code=400, detail=f"Provider '{name}' already exists")
+            if not update.data:
+                raise HTTPException(status_code=400, detail="data required for add action")
+            providers[name] = update.data
+            message = f"Provider '{name}' added"
+            
+        elif action == "update":
+            if name not in providers:
+                raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
+            if not update.data:
+                raise HTTPException(status_code=400, detail="data required for update action")
+            providers[name] = update.data
+            message = f"Provider '{name}' updated"
+            
+        elif action == "delete":
+            if name not in providers:
+                raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
+            del providers[name]
+            message = f"Provider '{name}' deleted"
+            
+        else:
+            raise HTTPException(status_code=400, detail=f"Invalid action: {action}. Use add, update, or delete")
+        
+        # Write updated config back to file
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(current_config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        
+        logger.info(f"Provider {action} by user {current_user.username}: {name}")
+        
+        return ConfigUpdateResponse(
+            success=True,
+            message=message,
+            reloaded_config={"llm": {"providers": providers}},
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating provider: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update provider: {str(e)}")
+
+
+@router.put("/config/models", response_model=ConfigUpdateResponse)
+async def update_model(
+    update: ModelUpdateRequest,
+    current_user: Any = Depends(get_current_user),
+) -> ConfigUpdateResponse:
+    """
+    CRUD operations for LLM models.
+    
+    - add: Add new model (requires model_name and data)
+    - update: Update existing model (requires model_name and data)
+    - delete: Delete model (requires model_name only)
+    """
+    import yaml
+    
+    config_path = get_config_path()
+    
+    try:
+        # Load current config
+        with open(config_path, encoding="utf-8") as f:
+            current_config = yaml.safe_load(f) or {}
+        
+        # Ensure llm.models exists
+        if "llm" not in current_config:
+            current_config["llm"] = {}
+        if "models" not in current_config["llm"]:
+            current_config["llm"]["models"] = {}
+        
+        models = current_config["llm"]["models"]
+        action = update.action.lower()
+        model_name = update.model_name
+        
+        if action == "add":
+            if model_name in models:
+                raise HTTPException(status_code=400, detail=f"Model '{model_name}' already exists")
+            if not update.data:
+                raise HTTPException(status_code=400, detail="data required for add action")
+            models[model_name] = update.data
+            message = f"Model '{model_name}' added"
+            
+        elif action == "update":
+            if model_name not in models:
+                raise HTTPException(status_code=404, detail=f"Model '{model_name}' not found")
+            if not update.data:
+                raise HTTPException(status_code=400, detail="data required for update action")
+            models[model_name] = update.data
+            message = f"Model '{model_name}' updated"
+            
+        elif action == "delete":
+            if model_name not in models:
+                raise HTTPException(status_code=404, detail=f"Model '{model_name}' not found")
+            del models[model_name]
+            message = f"Model '{model_name}' deleted"
+            
+        else:
+            raise HTTPException(status_code=400, detail=f"Invalid action: {action}. Use add, update, or delete")
+        
+        # Write updated config back to file
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(current_config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        
+        logger.info(f"Model {action} by user {current_user.username}: {model_name}")
+        
+        return ConfigUpdateResponse(
+            success=True,
+            message=message,
+            reloaded_config={"llm": {"models": models}},
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating model: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update model: {str(e)}")
 
 
 @router.post("/refresh", response_model=ConfigUpdateResponse)

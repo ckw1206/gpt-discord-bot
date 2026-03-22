@@ -3,7 +3,9 @@ import ReactMarkdown from 'react-markdown'
 import axios from 'axios'
 import { toast } from 'react-hot-toast'
 import Modal from './Modal'
-import { ArrowLeftIcon, DocumentArrowDownIcon, TrashIcon } from '@heroicons/react/24/outline'
+import { ArrowLeft, FileDown, Trash2 } from 'lucide-react'
+import { Button } from './ui/button'
+import { Input } from './ui/input'
 
 const API_BASE = '/api'
 
@@ -174,40 +176,34 @@ export default function PersonaEditor({ token, personaName, onSave, onSaveWithNa
   }
 
   if (loading) {
-    return <div style={{ padding: '2rem' }}>Loading persona...</div>
+    return <div className="p-8">Loading persona...</div>
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '1rem' }}>
+    <div className="flex flex-col h-full gap-4">
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2>{personaName ? `Edit: ${personaName}` : 'New Persona'}</h2>
-        <button onClick={onCancel} style={{ padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <ArrowLeftIcon style={{ width: '1rem', height: '1rem' }} />
+      <div className="flex justify-between items-center">
+        <h2 className="text-xl font-semibold">{personaName ? `Edit: ${personaName}` : 'New Persona'}</h2>
+        <Button variant="ghost" onClick={onCancel}>
+          <ArrowLeft className="w-4 h-4 mr-2" />
           Back
-        </button>
+        </Button>
       </div>
 
-      {/* Usage info (21.5.3) - enhanced to show tasks AND models */}
+      {/* Usage info - enhanced to show tasks AND models */}
       {usage.length > 0 && (
-        <div style={{ 
-          padding: '0.75rem', 
-          backgroundColor: '#422006', 
-          border: '1px solid #f59e0b',
-          borderRadius: '4px',
-          fontSize: '0.875rem'
-        }}>
-          <strong style={{ color: '#f59e0b' }}>⚠️ Used by {usage.length} item(s):</strong>
+        <div className="p-3 bg-amber-950 border border-amber-600 rounded text-sm">
+          <strong className="text-amber-500">⚠️ Used by {usage.length} item(s):</strong>
           
           {/* Separate tasks and models */}
           {usage.filter(u => u.type === 'task').length > 0 && (
             <>
-              <div style={{ marginTop: '0.5rem', fontWeight: 'bold' }}>Tasks:</div>
-              <ul style={{ margin: '0.25rem 0 0 1.5rem', padding: 0 }}>
+              <div className="mt-2 font-bold">Tasks:</div>
+              <ul className="mt-1 pl-6">
                 {usage.filter(u => u.type === 'task').map((u) => (
                   <li key={u.filename}>
                     <code>{u.name}</code>
-                    {u.schedule && <span style={{ color: '#9ca3af', marginLeft: '0.5rem' }}>schedule: {u.schedule}</span>}
+                    {u.schedule && <span className="text-muted-foreground ml-2">schedule: {u.schedule}</span>}
                   </li>
                 ))}
               </ul>
@@ -216,8 +212,8 @@ export default function PersonaEditor({ token, personaName, onSave, onSaveWithNa
           
           {usage.filter(u => u.type === 'model').length > 0 && (
             <>
-              <div style={{ marginTop: '0.5rem', fontWeight: 'bold' }}>Models (config.yaml):</div>
-              <ul style={{ margin: '0.25rem 0 0 1.5rem', padding: 0 }}>
+              <div className="mt-2 font-bold">Models (config.yaml):</div>
+              <ul className="mt-1 pl-6">
                 {usage.filter(u => u.type === 'model').map((u) => (
                   <li key={u.filename}>
                     <code>{u.name}</code>
@@ -232,52 +228,37 @@ export default function PersonaEditor({ token, personaName, onSave, onSaveWithNa
       {/* Name input for new personas */}
       {!personaName && (
         <div>
-          <label style={{ display: 'block', marginBottom: '0.5rem' }}>Persona Name:</label>
-          <input
+          <label className="block mb-2">Persona Name:</label>
+          <Input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="my-persona"
-            style={{
-              width: '100%',
-              padding: '0.5rem',
-              backgroundColor: '#252525',
-              border: '1px solid #444',
-              borderRadius: '4px',
-              color: '#fff',
-            }}
           />
         </div>
       )}
 
       {/* Action buttons */}
-      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          style={{ padding: '0.5rem 1rem', backgroundColor: '#22c55e', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-        >
+      <div className="flex gap-2 flex-wrap">
+        <Button onClick={handleSave} disabled={saving}>
           Save
-        </button>
+        </Button>
         {!personaName && (
-          <button
-            onClick={loadTemplate}
-            disabled={saving}
-            style={{ padding: '0.5rem 1rem', backgroundColor: '#6366f1', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-          >
-            <DocumentArrowDownIcon style={{ width: '1rem', height: '1rem' }} />
+          <Button variant="outline" onClick={loadTemplate} disabled={saving}>
+            <FileDown className="w-4 h-4 mr-2" />
             Use Template
-          </button>
+          </Button>
         )}
         {personaName && !personaName.endsWith('-example') && (
-          <button
+          <Button
+            variant="destructive"
             onClick={handleDeleteClick}
             disabled={saving}
-            style={{ padding: '0.5rem 1rem', backgroundColor: '#ef4444', marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+            className="ml-auto"
           >
-            <TrashIcon style={{ width: '1rem', height: '1rem' }} />
+            <Trash2 className="w-4 h-4 mr-2" />
             Delete
-          </button>
+          </Button>
         )}
       </div>
 
@@ -296,50 +277,29 @@ export default function PersonaEditor({ token, personaName, onSave, onSaveWithNa
       )}
 
       {/* Editor + Preview */}
-      <div style={{ display: 'flex', gap: '1rem', flex: 1, minHeight: 0 }}>
+      <div className="flex gap-4 flex-1 min-h-0">
         {/* Editor */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ marginBottom: '0.5rem', display: 'flex', justifyContent: 'space-between' }}>
+        <div className="flex-1 flex flex-col">
+          <div className="mb-2 flex justify-between">
             <span>Markdown Editor</span>
-            <button onClick={() => setShowPreview(!showPreview)} style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}>
+            <Button variant="outline" size="sm" onClick={() => setShowPreview(!showPreview)}>
               {showPreview ? 'Hide' : 'Show'} Preview
-            </button>
+            </Button>
           </div>
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
             placeholder="Write your persona content in Markdown..."
-            style={{
-              flex: 1,
-              resize: 'none',
-              padding: '1rem',
-              backgroundColor: '#252525',
-              border: '1px solid #444',
-              borderRadius: '4px',
-              color: '#fff',
-              fontFamily: 'monospace',
-              fontSize: '0.9rem',
-              lineHeight: '1.5',
-            }}
+            className="flex-1 resize-none p-4 bg-background border rounded text-foreground font-mono text-sm leading-6"
           />
         </div>
 
         {/* Preview */}
         {showPreview && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-            <span style={{ marginBottom: '0.5rem' }}>Preview</span>
+          <div className="flex-1 flex flex-col">
+            <span className="mb-2">Preview</span>
             <div
-              style={{
-                flex: 1,
-                overflow: 'auto',
-                padding: '1rem',
-                backgroundColor: '#1a1a1a',
-                border: '1px solid #444',
-                borderRadius: '4px',
-                color: '#ddd',
-                fontSize: '0.9rem',
-                lineHeight: '1.6',
-              }}
+              className="flex-1 overflow-auto p-4 bg-background border rounded text-foreground text-sm leading-6"
             >
               <ReactMarkdown>{content || '*No content*'}</ReactMarkdown>
             </div>
@@ -348,7 +308,7 @@ export default function PersonaEditor({ token, personaName, onSave, onSaveWithNa
       </div>
 
       {/* Word count */}
-      <div style={{ color: '#666', fontSize: '0.8rem' }}>
+      <div className="text-muted-foreground text-sm">
         {content.split(/\s+/).filter(Boolean).length} words
       </div>
     </div>

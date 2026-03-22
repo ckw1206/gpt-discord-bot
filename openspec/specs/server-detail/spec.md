@@ -3,7 +3,7 @@
 ## Purpose
 Provides detailed view of Discord guilds with member/channel lists and permission management.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Server detail endpoint
 The system SHALL provide an endpoint to get detailed information about a specific Discord guild.

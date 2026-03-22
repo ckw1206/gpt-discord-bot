@@ -55,7 +55,6 @@ def _setup_job_listeners():
                 _job_status[job_id]['completed_at'] = datetime.now().isoformat()
                 if event.exception:
                     _job_status[job_id]['error'] = str(event.exception)
-                logger.info(f"Job completed: {job_id}")
         
         def on_job_error(event):
             job_id = event.job_id
@@ -63,13 +62,11 @@ def _setup_job_listeners():
                 _job_status[job_id]['status'] = 'failed'
                 _job_status[job_id]['completed_at'] = datetime.now().isoformat()
                 _job_status[job_id]['error'] = str(event.exception) if event.exception else 'Unknown error'
-                logger.error(f"Job failed: {job_id} - {event.exception}")
         
         # Add listeners if scheduler is available
         if _scheduler_ref:
             _scheduler_ref.add_listener(on_job_executed, EVENT_JOB_EXECUTED)
             _scheduler_ref.add_listener(on_job_error, EVENT_JOB_ERROR)
-            logger.info("Job execution listeners registered")
     except ImportError:
         logger.warning("APScheduler events not available for job tracking")
 
@@ -549,6 +546,7 @@ async def run_task(name: str) -> dict:
             'result': None,
             'error': None
         }
+        logger.info(f"Stored job status for task '{task_name}' (internal name), job_id={job_id}")
         
         _scheduler_ref.add_job(
             run_scheduled_task,
@@ -581,13 +579,50 @@ async def get_task_execution_status(name: str) -> dict:
     global _job_status
     
     # Find the most recent job for this task
-    # Try both original name and normalized name
+    # First, look up the actual task config to get the internal name
+    from bot.config.loader import get_config
+    from bot.config.tasks import load_scheduled_tasks
+    
+    config = get_config()
+    tasks = load_scheduled_tasks(config)
+    
+    # Find the internal task name from config
+    # Try matching by filename (name parameter) against task keys or their internal names
     name_normalized = name.replace('-', '_')
+    internal_task_name = None
+    
+    # Check if the name directly matches a task key
+    if name in tasks:
+        internal_task_name = name
+    elif name_normalized in tasks:
+        internal_task_name = name_normalized
+    else:
+        # Search through tasks to find matching filename
+        from pathlib import Path
+        TASKS_DIR = Path(__file__).parent.parent.parent / "config" / "tasks"
+        for filepath in TASKS_DIR.glob("*.yaml"):
+            if filepath.stem == name or filepath.stem.replace('-', '_') == name_normalized:
+                file_data = yaml.safe_load(filepath.read_text(encoding='utf-8')) or {}
+                internal_file_name = str(file_data.get('name') or filepath.stem)
+                if internal_file_name in tasks:
+                    internal_task_name = internal_file_name
+                    break
+    
+    # Use the internal name to find matching jobs
+    name_variants = [name, name_normalized]
+    if internal_task_name:
+        name_variants.append(internal_task_name)
+    
+    # Also try common suffix removal as fallback
+    if name_normalized.endswith('_checker'):
+        name_variants.append(name_normalized[:-7])
+    elif name_normalized.endswith('_task'):
+        name_variants.append(name_normalized[:-5])
     
     matching_jobs = []
     for job_id, status in _job_status.items():
         task_name = status.get('task_name', '')
-        if task_name == name or task_name == name_normalized:
+        if task_name in name_variants:
             matching_jobs.append((job_id, status))
     
     if not matching_jobs:
@@ -600,7 +635,7 @@ async def get_task_execution_status(name: str) -> dict:
     matching_jobs.sort(key=lambda x: x[1].get('started_at', ''), reverse=True)
     job_id, status = matching_jobs[0]
     
-    return {
+    result = {
         "job_id": job_id,
         "status": status.get('status', 'unknown'),
         "task_name": status.get('task_name'),
@@ -609,3 +644,4 @@ async def get_task_execution_status(name: str) -> dict:
         "result": status.get('result'),
         "error": status.get('error')
     }
+    return result

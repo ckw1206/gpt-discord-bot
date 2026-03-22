@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
-import { ArrowPathIcon, CodeBracketIcon, InformationCircleIcon } from '@heroicons/react/24/outline'
+import { RefreshCw, Code, Info } from 'lucide-react'
+import { Button } from './ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table'
 
 const API_BASE = '/api'
 
@@ -43,9 +46,10 @@ export default function SkillsList({ token, onSelectSkill }: SkillsListProps) {
       const res = await axios.get(`${API_BASE}/skills`, authHeaders)
       setSkills(res.data || [])
       setError(null)
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to fetch skills:', err)
-      setError(err.response?.data?.detail || 'Failed to load skills')
+      const error = err as { response?: { data?: { detail?: string } } }
+      setError(error.response?.data?.detail || 'Failed to load skills')
     } finally {
       setLoading(false)
     }
@@ -60,114 +64,106 @@ export default function SkillsList({ token, onSelectSkill }: SkillsListProps) {
   }
 
   if (loading) {
-    return <div>Loading skills...</div>
+    return <div className="p-4">Loading skills...</div>
   }
 
   if (error) {
     return (
-      <div style={{ padding: '1rem' }}>
-        <p style={{ color: '#ff6b6b' }}>{error}</p>
-        <button onClick={fetchSkills}>Retry</button>
+      <div className="p-4">
+        <p className="text-destructive mb-2">{error}</p>
+        <Button variant="outline" onClick={fetchSkills}>Retry</Button>
       </div>
     )
   }
 
   return (
-    <div style={{ padding: '1rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <CodeBracketIcon style={{ width: '1.5rem', height: '1.5rem' }} />
+    <div className="p-4">
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="flex items-center gap-2 text-xl font-semibold">
+          <Code className="w-6 h-6" />
           Skills (Tools)
         </h2>
-        <button 
-          onClick={fetchSkills} 
-          style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-        >
-          <ArrowPathIcon style={{ width: '1rem', height: '1rem' }} />
+        <Button variant="outline" onClick={fetchSkills}>
+          <RefreshCw className="w-4 h-4 mr-2" />
           Refresh
-        </button>
+        </Button>
       </div>
 
-      <p style={{ color: '#888', marginBottom: '1rem', fontSize: '0.875rem' }}>
+      <p className="text-sm text-muted-foreground mb-4">
         Read-only view of available skills. Modification is not in scope (future consideration).
       </p>
 
       {skills.length === 0 ? (
-        <div style={{ padding: '2rem', textAlign: 'center', color: '#888' }}>
+        <div className="p-8 text-center text-muted-foreground">
           <p>No skills found.</p>
           <p>Skill files should be in <code>bot/llm/tools/skills/</code></p>
         </div>
       ) : (
-        <div style={{ display: 'grid', gap: '1rem' }}>
+        <div className="grid gap-4">
           {skills.map((skill) => (
-            <div
+            <Card 
               key={skill.name}
-              style={{
-                border: '1px solid #444',
-                borderRadius: '8px',
-                padding: '1rem',
-                backgroundColor: selectedSkill === skill.name ? '#2a2a2a' : '#1e1e1e',
-                cursor: 'pointer',
-                transition: 'background-color 0.2s',
-              }}
+              className={`cursor-pointer transition-colors hover:bg-muted/50 ${
+                selectedSkill === skill.name ? 'border-primary' : ''
+              }`}
               onClick={() => handleSkillClick(skill.name)}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div>
-                  <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.125rem', fontWeight: '600' }}>
-                    {skill.name}
-                  </h3>
-                  {skill.description && (
-                    <p style={{ margin: 0, color: '#aaa', fontSize: '0.875rem' }}>
-                      {skill.description}
-                    </p>
-                  )}
+              <CardHeader className="py-3">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <CardTitle className="text-lg">{skill.name}</CardTitle>
+                    {skill.description && (
+                      <p className="text-sm text-muted-foreground mt-1">
+                        {skill.description}
+                      </p>
+                    )}
+                  </div>
+                  <Info className="w-5 h-5 text-muted-foreground" />
                 </div>
-                <InformationCircleIcon style={{ width: '1.25rem', height: '1.25rem', color: '#666' }} />
-              </div>
+              </CardHeader>
 
               {selectedSkill === skill.name && skill.parameters.length > 0 && (
-                <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid #444' }}>
-                  <h4 style={{ margin: '0 0 0.75rem 0', fontSize: '0.875rem', color: '#888' }}>
+                <CardContent className="pt-0 border-t">
+                  <h4 className="text-sm text-muted-foreground mb-3 mt-3">
                     Parameters
                   </h4>
-                  <table style={{ width: '100%', fontSize: '0.875rem', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ textAlign: 'left', color: '#888' }}>
-                        <th style={{ padding: '0.25rem 0.5rem 0.5rem 0' }}>Name</th>
-                        <th style={{ padding: '0.25rem 0.5rem 0.5rem 0' }}>Type</th>
-                        <th style={{ padding: '0.25rem 0.5rem 0.5rem 0' }}>Required</th>
-                        <th style={{ padding: '0.25rem 0 0.5rem 0' }}>Description</th>
-                      </tr>
-                    </thead>
-                    <tbody>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>Required</TableHead>
+                        <TableHead>Description</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
                       {skill.parameters.map((param, idx) => (
-                        <tr key={idx}>
-                          <td style={{ padding: '0.25rem 0.5rem 0.25rem 0' }}>
-                            <code style={{ backgroundColor: '#333', padding: '0.125rem 0.375rem', borderRadius: '4px' }}>
+                        <TableRow key={idx}>
+                          <TableCell>
+                            <code className="bg-muted px-2 py-1 rounded text-sm">
                               {param.name}
                             </code>
-                          </td>
-                          <td style={{ padding: '0.25rem 0.5rem 0.25rem 0', color: '#7dd3fc' }}>
+                          </TableCell>
+                          <TableCell className="text-blue-400">
                             {param.type}
-                          </td>
-                          <td style={{ padding: '0.25rem 0.5rem 0.25rem 0' }}>
+                          </TableCell>
+                          <TableCell>
                             {param.required ? (
-                              <span style={{ color: '#f87171', fontWeight: '500' }}>Yes</span>
+                              <span className="text-destructive font-medium">Yes</span>
                             ) : (
-                              <span style={{ color: '#888' }}>No</span>
+                              <span className="text-muted-foreground">No</span>
                             )}
-                          </td>
-                          <td style={{ padding: '0.25rem 0 0.25rem 0', color: '#aaa' }}>
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
                             {param.description}
-                          </td>
-                        </tr>
+                          </TableCell>
+                        </TableRow>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
+                    </TableBody>
+                  </Table>
+                </CardContent>
               )}
-            </div>
+            </Card>
           ))}
         </div>
       )}

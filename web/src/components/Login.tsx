@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth, toast } from '../App'
 import axios from 'axios'
+import { Button } from './ui/button'
+import { Input } from './ui/input'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
 
 const API_BASE = '/api'
 
@@ -40,42 +43,62 @@ export default function Login() {
       setToken(res.data.access_token)
       toast.success(isSetup ? 'Admin account created!' : 'Login successful!')
       navigate('/')
-    } catch (err: any) {
-      toast.error(err.response?.data?.detail || 'Authentication failed')
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { detail?: string } } }
+      toast.error(error.response?.data?.detail || 'Authentication failed')
       setSubmitting(false)
     }
   }
 
   if (loading) {
-    return <div>Loading...</div>
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <p>Loading...</p>
+      </div>
+    )
   }
 
   return (
-    <div className="card">
-      <h1>{isSetup ? 'Setup Admin Account' : 'Login'}</h1>
-      <form onSubmit={handleSubmit}>
-        <div>
-          <input
-            type="text"
-            placeholder="Username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            required
-          />
-        </div>
-        <div>
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-        </div>
-        <button type="submit" disabled={submitting}>
-          {submitting ? 'Please wait...' : (isSetup ? 'Create Admin' : 'Login')}
-        </button>
-      </form>
+    <div className="flex items-center justify-center min-h-screen">
+      <Card className="w-[350px]">
+        <CardHeader>
+          <CardTitle>{isSetup ? 'Setup Admin Account' : 'Login'}</CardTitle>
+          <CardDescription>
+            {isSetup 
+              ? 'Create your admin account to get started' 
+              : 'Enter your credentials to access the dashboard'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Input
+                type="text"
+                placeholder="Username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Input
+                type="password"
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </div>
+            <Button 
+              type="submit" 
+              disabled={submitting}
+              className="w-full"
+            >
+              {submitting ? 'Please wait...' : (isSetup ? 'Create Admin' : 'Login')}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   )
 }

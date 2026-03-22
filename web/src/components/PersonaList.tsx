@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
-import { ArrowPathIcon } from '@heroicons/react/24/outline'
+import { RefreshCw, Plus } from 'lucide-react'
+import { Button } from './ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
 
 const API_BASE = '/api'
 
@@ -35,94 +37,89 @@ export default function PersonaList({ token, onSelectPersona, onCreateNew }: Per
       const res = await axios.get(`${API_BASE}/personas`, authHeaders)
       setPersonas(res.data || [])
       setError(null)
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to fetch personas:', err)
-      setError(err.response?.data?.detail || 'Failed to load personas')
+      const error = err as { response?: { data?: { detail?: string } } }
+      setError(error.response?.data?.detail || 'Failed to load personas')
     } finally {
       setLoading(false)
     }
   }
 
   if (loading) {
-    return <div>Loading personas...</div>
+    return <div className="p-4">Loading personas...</div>
   }
 
   if (error) {
     return (
-      <div style={{ padding: '1rem' }}>
-        <p style={{ color: '#ff6b6b' }}>{error}</p>
-        <button onClick={fetchPersonas}>Retry</button>
+      <div className="p-4">
+        <p className="text-destructive mb-2">{error}</p>
+        <Button variant="outline" onClick={fetchPersonas}>Retry</Button>
       </div>
     )
   }
 
   return (
-    <div style={{ padding: '1rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-        <h2>Personas</h2>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+    <div className="p-4">
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-xl font-semibold">Personas</h2>
+        <div className="flex gap-2">
           {onCreateNew && (
-            <button onClick={onCreateNew} style={{ backgroundColor: '#22c55e' }}>
-              ➕ Add New
-            </button>
+            <Button onClick={onCreateNew}>
+              <Plus className="w-4 h-4 mr-2" />
+              Add New
+            </Button>
           )}
-          <button onClick={fetchPersonas} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <ArrowPathIcon style={{ width: '1rem', height: '1rem' }} />
+          <Button variant="outline" onClick={fetchPersonas}>
+            <RefreshCw className="w-4 h-4 mr-2" />
             Refresh
-          </button>
+          </Button>
         </div>
       </div>
 
       {personas.length === 0 ? (
-        <div style={{ padding: '2rem', textAlign: 'center', color: '#888' }}>
+        <div className="p-8 text-center text-muted-foreground">
           <p>No personas found.</p>
           <p>Create a persona file in <code>bot/config/personas/</code></p>
         </div>
       ) : (
-        <div style={{ display: 'grid', gap: '1rem' }}>
+        <div className="grid gap-4">
           {personas.map((persona) => (
-            <div
+            <Card 
               key={persona.name}
+              className={`cursor-pointer transition-colors hover:bg-muted/50 ${
+                onSelectPersona ? 'hover:border-primary' : ''
+              }`}
               onClick={() => onSelectPersona?.(persona.name)}
-              style={{
-                backgroundColor: '#1a1a1a',
-                borderRadius: '8px',
-                padding: '1rem',
-                cursor: onSelectPersona ? 'pointer' : 'default',
-                transition: 'background-color 0.2s',
-                border: '1px solid #333',
-              }}
-              onMouseEnter={(e) => {
-                if (onSelectPersona) {
-                  e.currentTarget.style.backgroundColor = '#252525'
-                }
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = '#1a1a1a'
-              }}
             >
-              <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.1rem' }}>
-                {persona.name}
-              </h3>
-              {persona.description && (
-                <p style={{ margin: 0, color: '#888', fontSize: '0.9rem' }}>
-                  {persona.description}
+              <CardHeader className="py-3">
+                <CardTitle className="text-lg">{persona.name}</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0">
+                {persona.description && (
+                  <p className="text-sm text-muted-foreground">
+                    {persona.description}
+                  </p>
+                )}
+                <p className="text-xs text-muted-foreground mt-2">
+                  {persona.filename}
                 </p>
-              )}
-              <p style={{ margin: '0.5rem 0 0 0', color: '#666', fontSize: '0.8rem' }}>
-                {persona.filename}
-              </p>
-            </div>
+              </CardContent>
+            </Card>
           ))}
         </div>
       )}
 
-      <div style={{ marginTop: '1.5rem', padding: '1rem', backgroundColor: '#252525', borderRadius: '8px' }}>
-        <h4 style={{ margin: '0 0 0.5rem 0' }}>Add New Persona</h4>
-        <p style={{ margin: 0, color: '#888', fontSize: '0.9rem' }}>
-          Create a new persona file in <code>bot/config/personas/</code> with a <code>.md</code> extension.
-        </p>
-      </div>
+      <Card className="mt-6 bg-muted/50">
+        <CardHeader className="py-3">
+          <CardTitle className="text-base">Add New Persona</CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <p className="text-sm text-muted-foreground">
+            Create a new persona file in <code>bot/config/personas/</code> with a <code>.md</code> extension.
+          </p>
+        </CardContent>
+      </Card>
     </div>
   )
 }

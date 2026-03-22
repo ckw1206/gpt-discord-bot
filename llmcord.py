@@ -95,6 +95,7 @@ intents.message_content = True
 intents.dm_messages = True
 intents.voice_states = True  # Enable voice states for /join and /leave commands
 intents.guilds = True  # Required to access guild channels via get_channel()
+intents.members = True  # Required to access guild members
 activity = discord.CustomActivity(name=(config.get("status_message") or "github.com/jakobdylanc/llmcord")[:128])
 discord_bot = commands.Bot(intents=intents, activity=activity, command_prefix=None)
 httpx_client = httpx.AsyncClient()

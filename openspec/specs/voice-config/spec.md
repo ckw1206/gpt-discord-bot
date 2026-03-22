@@ -46,3 +46,31 @@ The azure-speech config SHALL support these fields:
 - **WHEN** `default_style` field is provided (e.g., "cheerful", "sad")
 - **THEN** used as the default speaking style for TTS
 
+### Requirement: Environment variable fallback
+The azure-speech config SHALL fall back to environment variables when config values are empty.
+
+#### Scenario: Key from AZURE_SPEECH_KEY env var
+- **WHEN** `key` field in config is empty AND `AZURE_SPEECH_KEY` environment variable is set
+- **THEN** use the environment variable value for authentication
+
+#### Scenario: Region from AZURE_SPEECH_REGION env var
+- **WHEN** `region` field in config is empty AND `AZURE_SPEECH_REGION` environment variable is set
+- **THEN** use the environment variable value for endpoint region
+
+#### Scenario: Endpoint from AZURE_SPEECH_ENDPOINT env var
+- **WHEN** `endpoint` field in config is empty AND `AZURE_SPEECH_ENDPOINT` environment variable is set
+- **THEN** use the environment variable value for custom endpoint
+
+#### Scenario: Voice from AZURE_SPEECH_VOICE env var
+- **WHEN** `default_voice` field in config is empty AND `AZURE_SPEECH_VOICE` environment variable is set
+- **THEN** use the environment variable value for default voice
+
+#### Scenario: Style from AZURE_SPEECH_STYLE env var
+- **WHEN** `default_style` field in config is empty AND `AZURE_SPEECH_STYLE` environment variable is set
+- **THEN** use the environment variable value for default style
+
+#### Scenario: Env vars override empty config
+- **WHEN** config has empty fields but environment variables are set
+- **THEN** use environment variable values
+- **AND** config values take precedence when present
+

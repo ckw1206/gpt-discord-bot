@@ -1,5 +1,6 @@
-## ADDED Requirements
-
+## Purpose
+Provide a web-based admin portal for managing the Discord bot.
+## Requirements
 ### Requirement: Web portal serves on configurable port
 The system SHALL provide a web portal accessible at a configurable port (default 8080) that allows users to monitor and configure the Discord bot.
 
@@ -58,6 +59,8 @@ The system SHALL provide an endpoint that returns a list of connected Discord se
 ### Requirement: Simple config fields editable
 The system SHALL allow editing of simple config fields: status_message, max_text, max_images, max_messages, allow_dms, use_plain_responses, show_embed_color.
 
+**MODIFIED Description:** The system SHALL allow editing of simple config fields through a shadcn/ui-based form interface with proper validation and feedback.
+
 #### Scenario: Update status_message
 - **WHEN** user PUTs new status_message to /api/config
 - **THEN** config.yaml is updated and bot reloads config
@@ -69,13 +72,15 @@ The system SHALL allow editing of simple config fields: status_message, max_text
 ### Requirement: Persona list viewable
 The system SHALL provide read-only access to list all available personas.
 
+**MODIFIED Description:** The system SHALL provide access to list and manage personas through a shadcn/Table-based UI.
+
 #### Scenario: List personas
 - **WHEN** user requests GET /api/personas
 - **THEN** response includes array of persona names
 
 #### Scenario: Get persona content
 - **WHEN** user requests GET /api/personas/{name}
-- **THEN** response includes full persona markdown content
+- **THEN** response includes persona configuration
 
 ### Requirement: Task list viewable
 The system SHALL provide read-only access to list all scheduled tasks.
@@ -90,3 +95,61 @@ The system SHALL provide an endpoint to trigger config reload equivalent to /ref
 #### Scenario: Trigger refresh via API
 - **WHEN** user POSTs to /api/refresh
 - **THEN** config is reloaded and response confirms success
+
+### Requirement: Web portal uses shadcn/ui component library
+The web portal SHALL use shadcn/ui components for all UI elements, providing consistent, accessible, and maintainable components.
+
+#### Scenario: Components migrated to shadcn
+- **WHEN** the web portal renders any UI element
+- **THEN** it uses shadcn/ui components (Button, Input, Dialog, Table, Tabs, Select, Card, etc.)
+- **AND** follows shadcn composition patterns (FieldGroup, Field, etc.)
+- **AND** uses lucide-react for icons
+
+### Requirement: Portal config section editable in ConfigEditor
+The system SHALL allow editing of portal configuration fields (enabled, port, cors_origins, logs) through the ConfigEditor UI.
+
+#### Scenario: Portal section displays in ConfigEditor sidebar
+- **WHEN** user navigates to Config tab
+- **THEN** Portal section is visible in the sidebar navigation
+
+#### Scenario: Portal enabled toggle works
+- **WHEN** user toggles portal.enabled from true to false
+- **AND** clicks Save
+- **THEN** config.yaml is updated with portal.enabled: false
+
+#### Scenario: Portal port field is editable
+- **WHEN** user edits portal.port value to 9000
+- **AND** clicks Save
+- **THEN** config.yaml is updated with portal.port: 9000
+
+#### Scenario: Portal logs retention_days is editable
+- **WHEN** user edits portal.logs.retention_days value
+- **AND** clicks Save
+- **THEN** config.yaml is updated with new retention_days value
+
+#### Scenario: Portal logs levels is editable
+- **WHEN** user edits portal.logs.levels (comma-separated)
+- **AND** clicks Save
+- **THEN** config.yaml is updated with new levels array
+
+### Requirement: Voice config section editable in ConfigEditor
+The system SHALL allow editing of voice configuration fields (region, default_voice) through the ConfigEditor UI.
+
+#### Scenario: Voice section displays in ConfigEditor sidebar
+- **WHEN** user navigates to Config tab
+- **THEN** Voice section is visible in the sidebar navigation
+
+#### Scenario: Voice region field is editable
+- **WHEN** user edits voice.region value
+- **AND** clicks Save
+- **THEN** config.yaml is updated with new region value
+
+#### Scenario: Voice default_voice field is editable
+- **WHEN** user edits voice.default_voice value
+- **AND** clicks Save
+- **THEN** config.yaml is updated with new default_voice value
+
+#### Scenario: Voice key is not displayed (sensitive)
+- **WHEN** user views Voice section
+- **THEN** voice.key field is NOT shown to protect sensitive credentials
+

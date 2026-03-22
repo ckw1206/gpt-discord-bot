@@ -1,7 +1,19 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
 import { toast } from 'react-hot-toast'
-import { ArrowPathIcon, ChevronDownIcon, ChevronRightIcon, PencilSquareIcon, PlusIcon, PlayIcon, ClockIcon } from '@heroicons/react/24/outline'
+import { 
+  RefreshCw, 
+  ChevronDown, 
+  ChevronRight, 
+  Pencil, 
+  Plus, 
+  Play, 
+  Clock
+} from 'lucide-react'
+import { Button } from './ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
+import { Badge } from './ui/badge'
+import { ScrollArea } from './ui/scroll-area'
 
 const API_BASE = '/api'
 
@@ -88,7 +100,7 @@ export default function TaskList({ token, onSelectTask, onCreateNew, onRequestEd
         toast.success(`Task "${taskName}" queued for execution`)
         
         // Poll for status updates
-        const maxAttempts = 20  // 20 * 500ms = 10 seconds max
+        const maxAttempts = 120  // 120 * 500ms = 60 seconds max (tasks can take longer)
         let attempts = 0
         
         const pollStatus = async () => {
@@ -97,6 +109,8 @@ export default function TaskList({ token, onSelectTask, onCreateNew, onRequestEd
           try {
             const statusRes = await axios.get(`${API_BASE}/tasks/${taskName}/status`, authHeaders)
             const status = statusRes.data
+            
+            console.log('Task status:', status.status, status)
             
             if (status.status === 'completed') {
               toast.success(`Task "${taskName}" completed successfully`)
@@ -148,192 +162,156 @@ export default function TaskList({ token, onSelectTask, onCreateNew, onRequestEd
   }
 
   const getStatusBadge = (status: string) => {
-    const colors: Record<string, string> = {
-      scheduled: '#22c55e',  // green
-      pending: '#feca57',    // yellow
-      running: '#48dbfb',    // blue
-      disabled: '#6b7280',   // gray
-      error: '#ff6b6b',      // red
-      unknown: '#6b7280',
+    const variantMap: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+      scheduled: 'secondary',
+      pending: 'outline',
+      running: 'default',
+      disabled: 'secondary',
+      error: 'destructive',
+      unknown: 'secondary',
     }
     return (
-      <span style={{
-        padding: '2px 8px',
-        borderRadius: '4px',
-        backgroundColor: colors[status] || colors.unknown,
-        fontSize: '0.75rem',
-        fontWeight: 'bold',
-      }}>
+      <Badge variant={variantMap[status] || 'secondary'}>
         {status.toUpperCase()}
-      </span>
+      </Badge>
     )
   }
 
   if (loading) {
-    return <div>Loading tasks...</div>
+    return <div className="p-4">Loading tasks...</div>
   }
 
   if (error) {
     return (
-      <div style={{ padding: '1rem' }}>
-        <p style={{ color: '#ff6b6b' }}>{error}</p>
-        <button onClick={fetchTasks}>Retry</button>
+      <div className="p-4">
+        <p className="text-destructive mb-2">{error}</p>
+        <Button variant="outline" onClick={fetchTasks}>Retry</Button>
       </div>
     )
   }
 
   return (
-    <div style={{ padding: '1rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <ClockIcon style={{ width: '1.5rem', height: '1.5rem' }} />
+    <div className="p-4">
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="flex items-center gap-2 text-xl font-semibold">
+          <Clock className="w-6 h-6" />
           Scheduled Tasks
         </h2>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div className="flex gap-2">
           {(onCreateNew || onRequestCreate) && (
-            <button onClick={() => { if (onCreateNew) onCreateNew(); if (onRequestCreate) onRequestCreate(); }} style={{ backgroundColor: '#22c55e', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <PlusIcon style={{ width: '1rem', height: '1rem' }} />
+            <Button onClick={() => { if (onCreateNew) onCreateNew(); if (onRequestCreate) onRequestCreate(); }}>
+              <Plus className="w-4 h-4 mr-2" />
               Add New
-            </button>
+            </Button>
           )}
-          <button 
-            onClick={fetchTasks} 
-            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-          >
-            <ArrowPathIcon style={{ width: '1rem', height: '1rem' }} />
+          <Button variant="outline" onClick={fetchTasks}>
+            <RefreshCw className="w-4 h-4 mr-2" />
             Refresh
-          </button>
+          </Button>
         </div>
       </div>
 
       {tasks.length === 0 ? (
-        <div style={{ padding: '2rem', textAlign: 'center', color: '#888' }}>
+        <div className="p-8 text-center text-muted-foreground">
           <p>No tasks found.</p>
           <p>Create a task file in <code>bot/config/tasks/</code></p>
         </div>
       ) : (
-        <div style={{ display: 'grid', gap: '1rem' }}>
+        <div className="grid gap-4">
           {tasks.map((task) => (
-            <div
-              key={task.name}
-              style={{
-                border: '1px solid #444',
-                borderRadius: '8px',
-                backgroundColor: expandedTask === task.name ? '#2a2a2a' : '#1e1e1e',
-                overflow: 'hidden',
-              }}
-            >
+            <Card key={task.name} className={expandedTask === task.name ? 'border-primary' : ''}>
               {/* Card Header - Click to expand */}
-              <div 
-                style={{ 
-                  padding: '1rem', 
-                  cursor: 'pointer',
-                }}
+              <CardHeader 
+                className="cursor-pointer py-4"
                 onClick={() => setExpandedTask(expandedTask === task.name ? null : task.name)}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                <div className="flex justify-between items-start">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3 mb-2">
                       {/* Expand icon */}
                       {expandedTask === task.name ? (
-                        <ChevronDownIcon style={{ width: '1.25rem', height: '1.25rem', color: '#666' }} />
+                        <ChevronDown className="w-5 h-5 text-muted-foreground" />
                       ) : (
-                        <ChevronRightIcon style={{ width: '1.25rem', height: '1.25rem', color: '#666' }} />
+                        <ChevronRight className="w-5 h-5 text-muted-foreground" />
                       )}
-                      <h3 style={{ margin: 0, fontSize: '1.125rem', fontWeight: '600' }}>
-                        {task.name}
-                      </h3>
+                      <CardTitle className="text-lg">{task.name}</CardTitle>
                       {/* Status badge in header */}
                       {getStatusBadge(task.status)}
                     </div>
                     {task.description && (
-                      <p style={{ margin: '0 0 0.5rem 1.75rem', color: '#aaa', fontSize: '0.875rem' }}>
+                      <p className="text-sm text-muted-foreground ml-8 mb-2">
                         {task.description}
                       </p>
                     )}
                     {/* Schedule in collapsed view */}
                     {task.schedule && (
-                      <div style={{ marginLeft: '1.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#888', fontSize: '0.85rem', fontFamily: 'monospace' }}>
-                        <ClockIcon style={{ width: '1rem', height: '1rem' }} />
+                      <div className="ml-8 flex items-center gap-2 text-sm text-muted-foreground font-mono">
+                        <Clock className="w-4 h-4" />
                         {task.schedule}
                       </div>
                     )}
                   </div>
                   {/* Enable toggle in header */}
                   <div onClick={(e) => e.stopPropagation()}>
-                    <button
+                    <Button
+                      variant={task.enabled ? 'default' : 'secondary'}
+                      size="sm"
                       onClick={() => toggleTask(task.name, task.enabled ?? false)}
                       disabled={toggling === task.name}
-                      style={{
-                        padding: '0.4rem 0.8rem',
-                        fontSize: '0.85rem',
-                        backgroundColor: (task.enabled ?? false) ? '#22c55e' : '#4b5563',
-                        opacity: toggling === task.name ? 0.5 : 1,
-                      }}
                     >
                       {(task.enabled ?? false) ? 'ON' : 'OFF'}
-                    </button>
+                    </Button>
                   </div>
                 </div>
-              </div>
+              </CardHeader>
 
               {/* Expanded content - Configuration and action buttons */}
               {expandedTask === task.name && (
-                <div style={{ 
-                  padding: '1rem', 
-                  backgroundColor: '#252525', 
-                  borderTop: '1px solid #444',
-                }}>
-                  <h4 style={{ margin: '0 0 0.5rem 0', color: '#888', fontSize: '0.875rem' }}>
+                <CardContent className="border-t pt-4 bg-muted/50">
+                  <h4 className="text-sm text-muted-foreground mb-2">
                     Configuration
                   </h4>
-                  <pre style={{ 
-                    margin: 0, 
-                    padding: '1rem', 
-                    backgroundColor: '#1a1a1a', 
-                    borderRadius: '4px',
-                    overflow: 'auto',
-                    fontSize: '0.85rem',
-                    maxHeight: '300px',
-                  }}>
-                    {JSON.stringify(tasks.find(t => t.name === task.name), null, 2)}
-                  </pre>
+                  <ScrollArea className="h-[300px] rounded-md bg-background p-4">
+                    <pre className="text-sm">
+                      {JSON.stringify(tasks.find(t => t.name === task.name), null, 2)}
+                    </pre>
+                  </ScrollArea>
                   
                   {/* Action buttons at bottom-left of expanded area */}
-                  <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem' }}>
+                  <div className="mt-4 flex gap-2">
                     {/* Run Now button */}
-                    <button 
+                    <Button 
+                      variant="default"
                       onClick={() => runTask(task.name)}
                       disabled={runningTask === task.name}
-                      style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', opacity: runningTask === task.name ? 0.5 : 1 }}
                     >
-                      <PlayIcon style={{ width: '1rem', height: '1rem' }} />
+                      <Play className="w-4 h-4 mr-2" />
                       {runningTask === task.name ? 'Running...' : 'Run Now'}
-                    </button>
+                    </Button>
                     
                     {/* Edit button */}
                     {onSelectTask && (
-                      <button 
+                      <Button 
+                        variant="outline"
                         onClick={() => onSelectTask(task.name)}
-                        style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
                       >
-                        <PencilSquareIcon style={{ width: '1rem', height: '1rem' }} />
+                        <Pencil className="w-4 h-4 mr-2" />
                         Edit
-                      </button>
+                      </Button>
                     )}
                     {onRequestEdit && (
-                      <button 
+                      <Button 
+                        variant="outline"
                         onClick={() => onRequestEdit(task.name)}
-                        style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
                       >
-                        <PencilSquareIcon style={{ width: '1rem', height: '1rem' }} />
+                        <Pencil className="w-4 h-4 mr-2" />
                         Edit
-                      </button>
+                      </Button>
                     )}
                   </div>
-                </div>
+                </CardContent>
               )}
-            </div>
+            </Card>
           ))}
         </div>
       )}

@@ -8,8 +8,73 @@ import pytest
 from bot.voice.config import VoiceConfig, get_voice_config
 
 
-class TestGetVoiceConfig:
-    """Tests for get_voice_config function."""
+class TestNewVoiceKey:
+    """Tests for new 'voice' config key (preferred over legacy 'azure-speech')."""
+    
+    def test_returns_none_when_voice_not_in_config(self):
+        """Should return None when voice section is missing."""
+        config = {"providers": {}, "models": {}}
+        result = get_voice_config(config)
+        assert result is None
+    
+    def test_returns_voice_config_when_voice_has_valid_fields(self):
+        """Should return VoiceConfig when voice section has required fields."""
+        config = {
+            "providers": {},
+            "models": {},
+            "voice": {
+                "key": "test-key-123",
+                "region": "eastus"
+            }
+        }
+        result = get_voice_config(config)
+        assert result is not None
+        assert isinstance(result, VoiceConfig)
+        assert result.key == "test-key-123"
+        assert result.region == "eastus"
+        assert result.is_configured is True
+    
+    def test_voice_takes_precedence_over_azure_speech(self):
+        """When both voice and azure-speech exist, voice should take precedence."""
+        config = {
+            "providers": {},
+            "models": {},
+            "voice": {
+                "key": "new-key",
+                "region": "eastus"
+            },
+            "azure-speech": {
+                "key": "old-key",
+                "region": "westus"
+            }
+        }
+        result = get_voice_config(config)
+        assert result is not None
+        assert result.key == "new-key"  # Should use voice section
+        assert result.region == "eastus"
+    
+    def test_voice_with_all_optional_fields(self):
+        """Should include optional fields when provided in voice section."""
+        config = {
+            "providers": {},
+            "models": {},
+            "voice": {
+                "key": "test-key",
+                "region": "westeurope",
+                "endpoint": "https://custom.endpoint.com",
+                "default_voice": "en-US-JennyNeural",
+                "default_style": "cheerful"
+            }
+        }
+        result = get_voice_config(config)
+        assert result is not None
+        assert result.endpoint == "https://custom.endpoint.com"
+        assert result.default_voice == "en-US-JennyNeural"
+        assert result.default_style == "cheerful"
+
+
+class TestLegacyAzureSpeech:
+    """Tests for legacy 'azure-speech' key (deprecated but still supported)."""
     
     def test_returns_none_when_azure_speech_not_in_config(self):
         """Should return None when azure-speech section is missing."""
@@ -88,6 +153,21 @@ class TestGetVoiceConfig:
         result = get_voice_config(config)
         assert result is not None
         assert result.is_configured is False  # Key is empty
+    
+    def test_fallback_to_azure_speech_when_voice_missing(self):
+        """Should fall back to azure-speech when voice section is missing."""
+        config = {
+            "providers": {},
+            "models": {},
+            "azure-speech": {
+                "key": "fallback-key",
+                "region": "eastus"
+            }
+        }
+        result = get_voice_config(config)
+        assert result is not None
+        assert result.key == "fallback-key"
+        assert result.region == "eastus"
 
 
 class TestVoiceConfig:

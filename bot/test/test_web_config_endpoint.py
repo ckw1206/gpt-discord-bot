@@ -287,7 +287,12 @@ class TestConfigEndpoints:
         assert isinstance(response, ConfigResponse)
         assert response.config["status_message"] == "Test Bot"
         assert response.portal["enabled"] is True
-        assert "status_message" in response.editable_fields
+        assert "discord.status_message" in response.editable_fields
+        # Verify new structured LLM data fields (Task 9.2.7)
+        assert hasattr(response, 'llm_providers')
+        assert hasattr(response, 'llm_models')
+        assert response.llm_providers == {}  # No llm in test_config
+        assert response.llm_models == {}
 
     @pytest.mark.asyncio
     async def test_update_config_status_message(self):
@@ -384,8 +389,13 @@ class TestEditableFields:
         """Test that editable fields are properly defined."""
         from bot.web.routes.config import EDITABLE_FIELDS
         
-        assert "status_message" in EDITABLE_FIELDS
-        assert "max_text" in EDITABLE_FIELDS
+        # Test grouped keys (new structure)
+        assert "discord.status_message" in EDITABLE_FIELDS
+        assert "discord.client_id" in EDITABLE_FIELDS
+        assert "behavior.max_text" in EDITABLE_FIELDS
+        assert "llm.persona" in EDITABLE_FIELDS
+        assert "llm.system_prompt" in EDITABLE_FIELDS
+        assert "llm.fallback_models" in EDITABLE_FIELDS
         assert "portal" in EDITABLE_FIELDS
 
     def test_sensitive_fields_defined(self):

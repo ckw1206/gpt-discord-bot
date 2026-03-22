@@ -139,7 +139,7 @@ class TestCleanupOldLogs:
         async def mock_get_db():
             yield mock_session
         
-        with patch('bot.web.log_handler.get_db_session', return_value=mock_get_db()):
+        with patch('bot.web.log_handler.get_db', return_value=mock_get_db()):
             # Should not raise
             await cleanup_old_logs(retention_days=7)
 
@@ -159,7 +159,7 @@ class TestCleanupOldLogs:
         async def mock_get_db():
             yield mock_session
         
-        with patch('bot.web.log_handler.get_db_session', return_value=mock_get_db()):
+        with patch('bot.web.log_handler.get_db', return_value=mock_get_db()):
             # Should run without error even with no old logs
             await cleanup_old_logs(retention_days=7)
 

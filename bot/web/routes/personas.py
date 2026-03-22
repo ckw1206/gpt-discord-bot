@@ -13,10 +13,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["personas"])
 
 # Path to personas directory (bot/config/personas/)
-PERSONAS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "bot", "config", "personas")
+PERSONAS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "bot", "config", "personas")
 
 # Path to tasks directory (bot/config/tasks/)
-TASKS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "bot", "config", "tasks")
+TASKS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "bot", "config", "tasks")
 
 # Path to config.yaml
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "config.yaml")

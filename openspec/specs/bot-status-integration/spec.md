@@ -3,7 +3,7 @@
 ## Purpose
 Enables the web portal to display real-time Discord bot status and reload bot configuration.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Bot registers with web portal on ready
 The Discord bot SHALL register itself with the web portal when the on_ready event fires, providing access to bot state for the status API.

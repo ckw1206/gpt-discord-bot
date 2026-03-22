@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import axios from 'axios'
+import { ArrowLeft } from 'lucide-react'
+import { Button } from './ui/button'
+import { Badge } from './ui/badge'
 
 const API_BASE = '/api'
 
@@ -126,22 +129,28 @@ export default function ServerDetail({ token }: ServerDetailProps) {
   }
 
   if (loading) {
-    return <div>Loading...</div>
+    return <div className="p-8">Loading...</div>
   }
 
   if (error) {
     return (
-      <div>
-      <button onClick={() => navigate('/')}>&larr; Back to Dashboard</button>
-        <p style={{ color: 'red' }}>{error}</p>
+      <div className="p-4">
+        <Button variant="ghost" onClick={() => navigate('/')}>
+          <ArrowLeft className="w-4 h-4 mr-2" />
+          Back to Dashboard
+        </Button>
+        <p className="text-red-500 mt-4">{error}</p>
       </div>
     )
   }
 
   if (!server) {
     return (
-      <div>
-        <button onClick={() => navigate('/')}>&larr; Back to Dashboard</button>
+      <div className="p-4">
+        <Button variant="ghost" onClick={() => navigate('/')}>
+          <ArrowLeft className="w-4 h-4 mr-2" />
+          Back to Dashboard
+        </Button>
         <p>Server not found</p>
       </div>
     )
@@ -160,113 +169,87 @@ export default function ServerDetail({ token }: ServerDetailProps) {
   ]
 
   return (
-    <div>
-      <button onClick={() => navigate('/')}>&larr; Back to Dashboard</button>
+    <div className="p-4">
+      <Button variant="ghost" onClick={() => navigate('/')} className="mb-4">
+        <ArrowLeft className="w-4 h-4 mr-2" />
+        Back to Dashboard
+      </Button>
       
       {/* Server Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginTop: '1rem', marginBottom: '1.5rem' }}>
-        <div style={{ position: 'relative' }}>
+      <div className="flex items-center gap-4 mb-6">
+        <div className="relative">
           {server.icon ? (
             <img 
               src={server.icon} 
               alt={server.name}
-              style={{ width: '80px', height: '80px', borderRadius: '50%' }}
+              className="w-20 h-20 rounded-full"
             />
           ) : (
-            <div style={{ 
-              width: '80px', 
-              height: '80px', 
-              borderRadius: '50%', 
-              backgroundColor: '#646cff',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '2rem',
-              fontWeight: 'bold'
-            }}>
+            <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center text-muted-foreground text-2xl font-bold">
               {server.name.charAt(0).toUpperCase()}
             </div>
           )}
         </div>
         <div>
-          <h2 style={{ margin: 0 }}>{server.name}</h2>
-          <p style={{ margin: '0.25rem 0', color: '#888' }}>
+          <h2 className="text-2xl font-semibold m-0">{server.name}</h2>
+          <p className="text-muted-foreground mt-1">
             {server.member_count} members • {server.channel_count} channels
           </p>
         </div>
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-        <button 
+      <div className="flex gap-2 mb-4">
+        <Button 
+          variant={activeTab === 'members' ? 'default' : 'outline'}
           onClick={() => setActiveTab('members')}
-          style={{ backgroundColor: activeTab === 'members' ? '#646cff' : '#1a1a1a' }}
         >
           Members ({server.members.length})
-        </button>
-        <button 
+        </Button>
+        <Button 
+          variant={activeTab === 'channels' ? 'default' : 'outline'}
           onClick={() => setActiveTab('channels')}
-          style={{ backgroundColor: activeTab === 'channels' ? '#646cff' : '#1a1a1a' }}
         >
           Channels ({server.channels.length})
-        </button>
-        <button 
+        </Button>
+        <Button 
+          variant={activeTab === 'permissions' ? 'default' : 'outline'}
           onClick={() => setActiveTab('permissions')}
-          style={{ backgroundColor: activeTab === 'permissions' ? '#646cff' : '#1a1a1a' }}
         >
           Permissions
-        </button>
+        </Button>
       </div>
 
       {/* Members Tab */}
       {activeTab === 'members' && (
-        <div style={{ 
-          maxHeight: '400px', 
-          overflow: 'auto', 
-          backgroundColor: '#1a1a1a', 
-          borderRadius: '8px',
-          padding: '1rem'
-        }}>
+        <div className="max-h-[400px] overflow-auto bg-secondary rounded-lg p-4">
           {server.members.length === 0 ? (
             <p>No members found</p>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <div className="flex flex-col gap-2">
               {server.members.slice(0, 100).map((member) => (
                 <div 
                   key={member.id}
-                  style={{ 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    alignItems: 'center',
-                    padding: '0.5rem',
-                    backgroundColor: '#2a2a2a',
-                    borderRadius: '4px'
-                  }}
+                  className="flex justify-between items-center p-2 bg-muted rounded"
                 >
                   <div>
-                    <span style={{ fontWeight: 'bold' }}>{member.username}</span>
+                    <span className="font-bold">{member.username}</span>
                     {member.display_name && (
-                      <span style={{ color: '#888', marginLeft: '0.5rem' }}>
+                      <span className="text-muted-foreground ml-2">
                         (aka {member.display_name})
                       </span>
                     )}
                     {member.is_owner && (
-                      <span style={{ 
-                        marginLeft: '0.5rem', 
-                        padding: '0.125rem 0.375rem',
-                        backgroundColor: '#f59e0b',
-                        borderRadius: '4px',
-                        fontSize: '0.75rem'
-                      }}>
+                      <Badge variant="secondary" className="ml-2">
                         Owner
-                      </span>
+                      </Badge>
                     )}
                   </div>
-                  <span style={{ color: '#666', fontSize: '0.875rem' }}>ID: {member.id}</span>
+                  <span className="text-muted-foreground text-sm">ID: {member.id}</span>
                 </div>
               ))}
               {server.members.length > 100 && (
-                <p style={{ color: '#888', textAlign: 'center' }}>
+                <p className="text-muted-foreground text-center">
                   ... and {server.members.length - 100} more members
                 </p>
               )}
@@ -277,43 +260,23 @@ export default function ServerDetail({ token }: ServerDetailProps) {
 
       {/* Channels Tab */}
       {activeTab === 'channels' && (
-        <div style={{ 
-          maxHeight: '400px', 
-          overflow: 'auto', 
-          backgroundColor: '#1a1a1a', 
-          borderRadius: '8px',
-          padding: '1rem'
-        }}>
+        <div className="max-h-[400px] overflow-auto bg-secondary rounded-lg p-4">
           {server.channels.length === 0 ? (
             <p>No channels found</p>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <div className="flex flex-col gap-2">
               {server.channels.map((channel) => (
                 <div 
                   key={channel.id}
-                  style={{ 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    alignItems: 'center',
-                    padding: '0.5rem',
-                    backgroundColor: '#2a2a2a',
-                    borderRadius: '4px'
-                  }}
+                  className="flex justify-between items-center p-2 bg-muted rounded"
                 >
                   <div>
-                    <span style={{ fontWeight: 'bold' }}># {channel.name}</span>
-                    <span style={{ 
-                      marginLeft: '0.5rem', 
-                      padding: '0.125rem 0.375rem',
-                      backgroundColor: '#374151',
-                      borderRadius: '4px',
-                      fontSize: '0.75rem',
-                      color: '#9ca3af'
-                    }}>
+                    <span className="font-bold"># {channel.name}</span>
+                    <Badge variant="outline" className="ml-2">
                       {channel.type}
-                    </span>
+                    </Badge>
                   </div>
-                  <span style={{ color: '#666', fontSize: '0.875rem' }}>ID: {channel.id}</span>
+                  <span className="text-muted-foreground text-sm">ID: {channel.id}</span>
                 </div>
               ))}
             </div>
@@ -323,84 +286,60 @@ export default function ServerDetail({ token }: ServerDetailProps) {
 
       {/* Permissions Tab */}
       {activeTab === 'permissions' && (
-        <div style={{ 
-          backgroundColor: '#1a1a1a', 
-          borderRadius: '8px',
-          padding: '1rem'
-        }}>
-          <h3 style={{ marginTop: 0 }}>Bot Permissions</h3>
+        <div className="bg-secondary rounded-lg p-4">
+          <h3 className="mt-0">Bot Permissions</h3>
           
           {permissionMessage && (
-            <div style={{ 
-              padding: '0.75rem', 
-              marginBottom: '1rem',
-              backgroundColor: permissionMessage.includes('Error') || permissionMessage.includes('Invalid') || permissionMessage.includes('Failed') ? '#7f1d1d' : '#14532d',
-              borderRadius: '4px'
-            }}>
+            <div className="p-3 mb-4 rounded"
+              style={{
+                backgroundColor: permissionMessage.includes('Error') || permissionMessage.includes('Invalid') || permissionMessage.includes('Failed') ? '#7f1d1d' : '#14532d',
+              }}
+            >
               {permissionMessage}
             </div>
           )}
           
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          <div className="flex flex-col gap-3">
             {permissionList.map((perm) => {
               const hasPermission = server.permissions[perm.key as keyof GuildPermissions]
               return (
                 <div 
                   key={perm.key}
-                  style={{ 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    alignItems: 'center',
-                    padding: '0.75rem',
-                    backgroundColor: '#2a2a2a',
-                    borderRadius: '4px'
-                  }}
+                  className="flex justify-between items-center p-3 bg-muted rounded"
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <div className="flex items-center gap-2">
                     <span 
+                      className="w-2 h-2 rounded-full"
                       style={{
-                        width: '8px',
-                        height: '8px',
-                        borderRadius: '50%',
                         backgroundColor: hasPermission ? '#22c55e' : '#6b7280'
                       }}
                     />
                     <span>{perm.label}</span>
                   </div>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <button
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-green-500 border-green-500 hover:bg-green-500 hover:text-white"
                       onClick={() => updatePermission(perm.discord, 'grant')}
-                      style={{ 
-                        padding: '0.25rem 0.5rem', 
-                        fontSize: '0.75rem',
-                        backgroundColor: '#22c55e',
-                        border: 'none',
-                        borderRadius: '4px',
-                        cursor: 'pointer'
-                      }}
                     >
                       Grant
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-red-500 border-red-500 hover:bg-red-500 hover:text-white"
                       onClick={() => updatePermission(perm.discord, 'revoke')}
-                      style={{ 
-                        padding: '0.25rem 0.5rem', 
-                        fontSize: '0.75rem',
-                        backgroundColor: '#ef4444',
-                        border: 'none',
-                        borderRadius: '4px',
-                        cursor: 'pointer'
-                      }}
                     >
                       Revoke
-                    </button>
+                    </Button>
                   </div>
                 </div>
               )
             })}
           </div>
           
-          <p style={{ color: '#666', fontSize: '0.875rem', marginTop: '1rem' }}>
+          <p className="text-muted-foreground text-sm mt-4">
             Note: Permission changes are simulated. Actual Discord permission management requires administrator access.
           </p>
         </div>
