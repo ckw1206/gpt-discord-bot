@@ -52,6 +52,11 @@ class PortalConfig:
         """Allowed CORS origins. Empty = same origin only (secure)."""
         return self._config.get("cors_origins", [])
 
+    @property
+    def docs_enabled(self) -> bool:
+        """Whether API documentation is enabled."""
+        return self._config.get("docs_enabled", False)
+
 
 # Global config instance
 _config: PortalConfig | None = None

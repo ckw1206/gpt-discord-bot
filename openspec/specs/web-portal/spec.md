@@ -106,7 +106,7 @@ The web portal SHALL use shadcn/ui components for all UI elements, providing con
 - **AND** uses lucide-react for icons
 
 ### Requirement: Portal config section editable in ConfigEditor
-The system SHALL allow editing of portal configuration fields (enabled, port, cors_origins, logs) through the ConfigEditor UI.
+The system SHALL allow editing of portal configuration fields (enabled, port, cors_origins, docs_enabled, logs) through the ConfigEditor UI.
 
 #### Scenario: Portal section displays in ConfigEditor sidebar
 - **WHEN** user navigates to Config tab
@@ -116,6 +116,11 @@ The system SHALL allow editing of portal configuration fields (enabled, port, co
 - **WHEN** user toggles portal.enabled from true to false
 - **AND** clicks Save
 - **THEN** config.yaml is updated with portal.enabled: false
+
+#### Scenario: Portal docs_enabled toggle works
+- **WHEN** user toggles portal.docs_enabled from false to true
+- **AND** clicks Save
+- **THEN** config.yaml is updated with portal.docs_enabled: true
 
 #### Scenario: Portal port field is editable
 - **WHEN** user edits portal.port value to 9000

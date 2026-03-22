@@ -9,6 +9,8 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from fastapi.openapi.utils import get_openapi
+from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.connection import close_db, init_db, get_db_dependency
@@ -47,7 +49,119 @@ app = FastAPI(
     description="Web administration portal for llmcord Discord bot",
     version="1.0.0",
     lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
 )
+
+# Conditionally add docs routes after app creation
+from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
+from fastapi import APIRouter
+
+docs_router = APIRouter()
+
+def is_docs_enabled() -> bool:
+    """Check if docs are enabled at runtime (not just startup)."""
+    try:
+        config = get_portal_config()
+        return config.docs_enabled
+    except Exception:
+        return False
+
+
+@docs_router.get("/docs", include_in_schema=False)
+async def custom_swagger_ui_html():
+    if not is_docs_enabled():
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - Swagger UI",
+    )
+
+@docs_router.get("/redoc", include_in_schema=False)
+async def custom_redoc_html():
+    if not is_docs_enabled():
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+    return get_redoc_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - ReDoc",
+    )
+
+@docs_router.get("/openapi.json", include_in_schema=False)
+async def get_openapi_json():
+    """OpenAPI schema endpoint - gated by docs_enabled."""
+    if not is_docs_enabled():
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+    return custom_openapi()
+
+# Include docs router - runtime check happens in each endpoint
+app.include_router(docs_router, tags=["Docs"])
+logger.info("API documentation routes registered at /docs and /redoc (runtime gating enabled)")
+
+# Define OpenAPI tags for endpoint grouping
+openapi_tags = [
+    {"name": "Health", "description": "Health check endpoints"},
+    {"name": "Auth", "description": "Authentication and user management"},
+    {"name": "Status", "description": "Bot status and presence"},
+    {"name": "Config", "description": "Configuration management"},
+    {"name": "Tasks", "description": "Task management"},
+    {"name": "Skills", "description": "Skill management"},
+    {"name": "Servers", "description": "Server management"},
+    {"name": "Personas", "description": "Persona management"},
+    {"name": "Logs", "description": "Log management"},
+    {"name": "WebSocket", "description": "Real-time WebSocket endpoints"},
+]
+
+# OAuth2 security scheme
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+
+def custom_openapi():
+    """Generate custom OpenAPI schema with security scheme."""
+    if app.openapi_schema:
+        return app.openapi_schema
+    
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    
+    # Add tags
+    openapi_schema["tags"] = openapi_tags
+    
+    # Add security scheme
+    openapi_schema["components"]["securitySchemes"] = {
+        "bearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "description": "Enter your JWT token (no prefix needed)",
+        }
+    }
+    
+    # Apply security to all endpoints except health, setup, and has-users
+    for path, path_item in openapi_schema.get("paths", {}).items():
+        for method, operation in path_item.items():
+            if method in ["get", "post", "put", "delete", "patch"]:
+                # Skip public endpoints
+                if path in ["/health", "/openapi.json", "/docs", "/redoc"]:
+                    continue
+                if path == "/api/auth/setup":
+                    continue
+                if path == "/api/auth/has-users":
+                    continue
+                # Add security requirement
+                operation["security"] = [{"bearerAuth": []}]
+    
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+# Override the default OpenAPI endpoint
+app.openapi = custom_openapi
 
 # Add CORS middleware
 config = get_portal_config()
@@ -94,9 +208,13 @@ from bot.web.auth import (
 
 
 # Health check endpoint for container orchestration
-@app.get("/health")
+@app.get("/health", tags=["Health"])
 async def health_check():
-    """Health check endpoint for Docker/container health checks."""
+    """
+    Health check endpoint for Docker/container health checks.
+    
+    Returns the current health status of the web portal service.
+    """
     return {"status": "healthy", "service": "gpt-discord-bot-portal"}
 
 
@@ -126,31 +244,48 @@ async def log_requests(request: Request, call_next):
 
 
 # Auth routes
-@app.post("/api/auth/setup", response_model=Token)
+@app.post("/api/auth/setup", response_model=Token, tags=["Auth"])
 async def api_setup(request: SetupRequest, db: AsyncSession = Depends(get_db_dependency)):
-    """First-time setup - create initial admin user."""
+    """
+    First-time setup - create initial admin user.
+    
+    Use this endpoint only when no users exist in the system yet.
+    Creates the first admin user with the provided credentials.
+    """
     return await setup_portal(request, db)
 
 
-@app.get("/api/auth/has-users")
+@app.get("/api/auth/has-users", tags=["Auth"])
 async def api_has_users(db: AsyncSession = Depends(get_db_dependency)):
-    """Check if any users exist (for showing setup wizard vs login)."""
+    """
+    Check if any users exist in the system.
+    
+    Use this to determine whether to show the setup wizard or login page.
+    """
     has_users = await check_has_users(db)
     return {"has_users": has_users}
 
 
-@app.post("/api/auth/login", response_model=Token)
+@app.post("/api/auth/login", response_model=Token, tags=["Auth"])
 async def api_login(request: LoginRequest, db: AsyncSession = Depends(get_db_dependency)):
-    """Login with username and password."""
+    """
+    Login with username and password.
+    
+    Returns a JWT token that should be used for subsequent authenticated requests.
+    """
     return await login(request, db)
 
 
-@app.get("/api/auth/users", response_model=list[dict])
+@app.get("/api/auth/users", response_model=list[dict], tags=["Auth"])
 async def api_get_users(
     db: AsyncSession = Depends(get_db_dependency),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Get list of users (authenticated only)."""
+    """
+    Get list of all users.
+    
+    Requires authentication. Returns basic user information (passwords are not included).
+    """
     return await get_users(db, current_user)
 
 
@@ -163,13 +298,13 @@ from bot.web.routes.personas import router as personas_router
 from bot.web.routes.tasks import router as tasks_router
 from bot.web.routes.skills import router as skills_router
 
-app.include_router(status_router)
-app.include_router(servers_router)
-app.include_router(logs_router)
-app.include_router(config_router)
-app.include_router(personas_router)
-app.include_router(tasks_router)
-app.include_router(skills_router)
+app.include_router(status_router, tags=["Status"])
+app.include_router(servers_router, tags=["Servers"])
+app.include_router(logs_router, tags=["Logs"])
+app.include_router(config_router, tags=["Config"])
+app.include_router(personas_router, tags=["Personas"])
+app.include_router(tasks_router, tags=["Tasks"])
+app.include_router(skills_router, tags=["Skills"])
 
 
 # WebSocket endpoint for real-time logs
@@ -184,6 +319,11 @@ async def websocket_logs(websocket: WebSocket):
     
     Clients connect to receive log events as they occur.
     The logs are broadcast from the DatabaseLogHandler.
+    
+    **Connection:**
+    - Connect with: `ws://host/ws/logs?token=YOUR_JWT_TOKEN`
+    - Send "ping" to check connection health
+    - Receive JSON log entries with: level, timestamp, message
     """
     await websocket.accept()
     add_log_client(websocket)
@@ -211,7 +351,11 @@ async def websocket_logs(websocket: WebSocket):
 
 @app.get("/ws/status")
 async def websocket_status():
-    """Get WebSocket connection status."""
+    """
+    Get WebSocket connection status.
+    
+    Returns information about active WebSocket connections.
+    """
     return {
         "log_clients": get_log_client_count(),
         "status": "connected" if get_log_client_count() > 0 else "no_clients",

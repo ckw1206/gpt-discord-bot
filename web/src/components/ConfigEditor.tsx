@@ -24,7 +24,7 @@ const CONFIG_SECTIONS = [
   { id: 'behavior', label: 'Behavior', icon: '⚙️', fields: ['behavior.max_text', 'behavior.max_images', 'behavior.max_messages', 'behavior.use_plain_responses', 'behavior.show_embed_color', 'behavior.allow_dms'] },
   { id: 'llm', label: 'LLM', icon: '🤖', fields: ['llm.providers', 'llm.models', 'llm.fallback_models', 'llm.persona', 'llm.system_prompt'] },
   { id: 'voice', label: 'Voice', icon: '🎤', fields: ['voice.region', 'voice.default_voice', 'voice.key'] },
-  { id: 'portal', label: 'Web Portal', icon: '🌐', fields: ['portal.enabled', 'portal.port', 'portal.cors_origins', 'portal.require_discord_admin', 'portal.logs.retention_days', 'portal.logs.levels'] },
+  { id: 'portal', label: 'Web Portal', icon: '🌐', fields: ['portal.enabled', 'portal.port', 'portal.cors_origins', 'portal.docs_enabled', 'portal.require_discord_admin', 'portal.logs.retention_days', 'portal.logs.levels'] },
 ]
 
 // LLM tabs
@@ -368,6 +368,7 @@ export default function ConfigEditor({ token }: ConfigEditorProps) {
       'portal.enabled': 'Enabled',
       'portal.port': 'Port',
       'portal.cors_origins': 'CORS Origins',
+      'portal.docs_enabled': 'Docs Enabled',
       'portal.require_discord_admin': 'Require Discord Admin',
       'portal.logs.retention_days': 'Log Retention (days)',
       'portal.logs.levels': 'Log Levels',

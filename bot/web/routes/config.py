@@ -37,7 +37,7 @@ EDITABLE_FIELDS = {
     "voice.region", "voice.default_voice", "voice.key",
     # Portal section (nested fields)
     "portal.enabled", "portal.port", "portal.cors_origins", "portal.require_discord_admin",
-    "portal.logs.retention_days", "portal.logs.levels",
+    "portal.logs.retention_days", "portal.logs.levels", "portal.docs_enabled",
 }
 
 
@@ -154,6 +154,7 @@ def _get_portal_config_safe() -> dict[str, Any]:
         return {
             "enabled": portal.get("enabled", False),
             "port": portal.get("port", 8080),
+            "docs_enabled": portal.get("docs_enabled", False),
             "cors_origins": portal.get("cors_origins", []),
             "logs": {
                 "retention_days": portal.get("logs", {}).get("retention_days", 7),
@@ -359,6 +360,9 @@ async def update_config(
             if "require_discord_admin" in portal_updates:
                 current_config["portal"]["require_discord_admin"] = portal_updates["require_discord_admin"]
                 updates_applied.append("portal.require_discord_admin")
+            if "docs_enabled" in portal_updates:
+                current_config["portal"]["docs_enabled"] = portal_updates["docs_enabled"]
+                updates_applied.append("portal.docs_enabled")
         
         # Write updated config back to file
         # Use allow_unicode=True to properly preserve Chinese/non-ASCII characters
@@ -580,6 +584,7 @@ async def refresh_config(current_user: Any = Depends(get_current_user)) -> Confi
                 "portal": {
                     "enabled": portal_config.enabled,
                     "port": portal_config.port,
+                    "docs_enabled": portal_config.docs_enabled,
                     "logs": {
                         "retention_days": portal_config.logs_retention_days,
                         "levels": portal_config.logs_levels,
