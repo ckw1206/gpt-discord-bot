@@ -1,6 +1,21 @@
 {
   "version": 1,
   "skills": {
+    "auth0-express": {
+      "source": "auth0/agent-skills",
+      "sourceType": "github",
+      "computedHash": "2c95a89833b8b86bef8fa2ca5dccbd9d86786b39f8501a79741805ae5e631356"
+    },
+    "auth0-quickstart": {
+      "source": "auth0/agent-skills",
+      "sourceType": "github",
+      "computedHash": "38dc5798cf6258d5545922be6bf995353470ec4ff2ef80f83292c2a5ffcad4cb"
+    },
+    "auth0-react": {
+      "source": "auth0/agent-skills",
+      "sourceType": "github",
+      "computedHash": "152ee28bbaa45bff25e9df116d3233343aefdf76a25f903f57190ef3b7d08e47"
+    },
     "shadcn": {
       "source": "shadcn/ui",
       "sourceType": "github",
