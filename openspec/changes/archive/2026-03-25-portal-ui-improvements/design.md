@@ -74,3 +74,56 @@ Additionally, this change addresses multiple UI consistency issues across the po
 - Should we preserve the raw YAML view as the default or as a toggle?
 - Should the unsaved changes dialog also apply to PersonaEditor?
 - How often should we refresh the uptime from the API to stay in sync?
+
+## Task Dashboard Improvements (Section 13)
+
+### Problem Statement
+
+The current task card interaction has several UX issues:
+
+1. **Redundant replace_string_in_file step**: When a user clicks to expand a task card, they see the config summary but must click "replace_string_in_file" again to open the TaskEditor - this is an extra unnecessary click.
+
+2. **Confusing button visibility**: The "replace_string_in_file" button appears in the expanded card even when the TaskEditor is already showing on the right side - users wonder if clicking it will do something different.
+
+3. **Silent data loss**: If a user is editing a task with unsaved changes and clicks on a different task card, the unsaved changes are silently replaced without warning.
+
+### Proposed Solution
+
+1. **Auto-expand to editor**: When clicking to expand a task card, automatically open the TaskEditor in the right panel. The expanded view becomes a preview that syncs with the editor.
+
+2. **Conditional replace_string_in_file button**: Hide the "replace_string_in_file" button when the task is expanded (since TaskEditor is already visible). Keep "Run Now" visible for quick task execution.
+
+3. **Unsaved warning for all task interactions**: Apply the same unsaved changes dialog (already implemented for "Add New") when clicking any task card during editing.
+
+### Design Decisions
+
+1. **Reuse existing unsaved dialog**: The `handleRequestCreateTask` pattern already exists in Dashboard - extend it to handle task card clicks
+   - Rationale: Consistent UX, less code to maintain
+   - Alternative: Create separate dialog - rejected for duplication
+
+2. **Single callback for expand**: Use `onRequestExpand` that checks unsaved changes before proceeding
+   - Rationale: Centralizes the unsaved check logic in Dashboard
+   - Alternative: Handle in TaskList - would require passing too much state
+
+3. **TaskEditor auto-loads**: When `taskName` prop changes, TaskEditor already fetches task data - no additional loading logic needed
+   - Rationale: Leverages existing behavior
+   - Alternative: Pre-fetch in TaskList - adds complexity
+
+### Implementation Details
+
+1. **State synchronization**: Use `editingTask` prop passed from Dashboard to TaskList
+   - TaskList has `useEffect` that syncs `expandedTask` with `editingTask`
+   - When collapsing, pass empty string to `onExpand` to clear editor
+
+2. **TaskEditor refresh**: Added `onTaskChange` callback from TaskList to Dashboard
+   - Called after toggle, delete, or rename operations
+   - Triggers `taskEditorKey` increment to force TaskEditor re-render
+
+3. **Task rename fix**: Create new task first, then delete old
+   - Original code deleted first, then couldn't PUT to non-existent file
+
+4. **Task delete fix**: Use `task.name` (filename from API) as `originalName`
+   - Not `config.name` which could differ from filename
+
+5. **Unsaved dialog buttons**: Added "Save" button alongside "Discard" and "Cancel"
+   - Save closes dialog, user manually saves in TaskEditor

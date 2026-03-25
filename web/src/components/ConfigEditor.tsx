@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import axios from 'axios'
 import { toast } from 'react-hot-toast'
 import FormModal from './FormModal'
@@ -8,6 +8,11 @@ import {
   Trash2,
   Eye,
   EyeOff,
+  MessageSquare,
+  Settings,
+  Bot,
+  Mic,
+  Globe,
 } from 'lucide-react'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
@@ -18,13 +23,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 
 const API_BASE = '/api'
 
-// Config sections for sidebar
+// Config sections for sidebar - using Lucide icon components
 const CONFIG_SECTIONS = [
-  { id: 'discord', label: 'Discord', icon: '💬', fields: ['discord.status_message', 'discord.bot_token', 'discord.client_id', 'discord.permissions'] },
-  { id: 'behavior', label: 'Behavior', icon: '⚙️', fields: ['behavior.max_text', 'behavior.max_images', 'behavior.max_messages', 'behavior.use_plain_responses', 'behavior.show_embed_color', 'behavior.allow_dms'] },
-  { id: 'llm', label: 'LLM', icon: '🤖', fields: ['llm.providers', 'llm.models', 'llm.fallback_models', 'llm.persona', 'llm.system_prompt'] },
-  { id: 'voice', label: 'Voice', icon: '🎤', fields: ['voice.region', 'voice.default_voice', 'voice.key'] },
-  { id: 'portal', label: 'Web Portal', icon: '🌐', fields: ['portal.enabled', 'portal.port', 'portal.cors_origins', 'portal.docs_enabled', 'portal.require_discord_admin', 'portal.logs.retention_days', 'portal.logs.levels'] },
+  { id: 'discord', label: 'Discord', icon: MessageSquare, fields: ['discord.status_message', 'discord.bot_token', 'discord.client_id', 'discord.permissions'] },
+  { id: 'behavior', label: 'Behavior', icon: Settings, fields: ['behavior.max_text', 'behavior.max_images', 'behavior.max_messages', 'behavior.use_plain_responses', 'behavior.show_embed_color', 'behavior.allow_dms'] },
+  { id: 'llm', label: 'LLM', icon: Bot, fields: ['llm.providers', 'llm.models', 'llm.fallback_models', 'llm.persona', 'llm.system_prompt'] },
+  { id: 'voice', label: 'Voice', icon: Mic, fields: ['voice.region', 'voice.default_voice', 'voice.key'] },
+  { id: 'portal', label: 'Web Portal', icon: Globe, fields: ['portal.enabled', 'portal.port', 'portal.cors_origins', 'portal.docs_enabled', 'portal.require_discord_admin', 'portal.logs.retention_days', 'portal.logs.levels'] },
 ]
 
 // LLM tabs
@@ -47,7 +52,7 @@ interface ConfigField {
 interface ConfigSection {
   id: string
   label: string
-  icon: string
+  icon: string | React.ComponentType<{ className?: string }>
   fields: ConfigField[]
 }
 
@@ -1031,23 +1036,18 @@ export default function ConfigEditor({ token }: ConfigEditorProps) {
         marginBottom: '1rem',
         padding: '0 0.5rem'
       }}>
-        <h2 style={{ margin: 0 }}>Configuration</h2>
+        <h2 className="flex items-center gap-2 text-xl font-semibold" style={{ margin: 0 }}>
+          <Settings className="w-6 h-6" />
+          Configuration
+        </h2>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-          <button 
+          <Button 
+            variant={editMode === 'json' ? 'default' : 'outline'}
+            size="sm"
             onClick={handleToggleEditMode}
-            style={{ 
-              backgroundColor: editMode === 'json' ? '#646cff' : '#2a2a2a',
-              color: '#fff',
-              border: '1px solid #444',
-              borderRadius: '6px',
-              padding: '6px 12px',
-              cursor: 'pointer',
-              fontSize: '0.85rem',
-              transition: 'background-color 0.2s'
-            }}
           >
             {editMode === 'form' ? 'JSON' : 'Form'}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -1073,9 +1073,17 @@ export default function ConfigEditor({ token }: ConfigEditorProps) {
                 marginBottom: '0.25rem',
                 backgroundColor: activeSection === section.id ? '#2a2a2a' : 'transparent',
                 border: activeSection === section.id ? '1px solid #444' : '1px solid transparent',
+                fontSize: '1rem',
+                fontWeight: activeSection === section.id ? '500' : '400',
+                display: 'flex',
+                alignItems: 'center',
               }}
             >
-              <span style={{ marginRight: '0.5rem' }}>{section.icon}</span>
+              {section.icon && typeof section.icon === 'function' && (
+                <span style={{ marginRight: '0.5rem', display: 'flex', alignItems: 'center' }}>
+                  {React.createElement(section.icon, { className: 'w-5 h-5' })}
+                </span>
+              )}
               {section.label}
             </div>
           ))}
@@ -1131,7 +1139,11 @@ export default function ConfigEditor({ token }: ConfigEditorProps) {
               {activeContent && (
                 <>
                   <div style={{ display: 'flex', alignItems: 'center', marginBottom: '1rem' }}>
-                    <span style={{ fontSize: '1.5rem', marginRight: '0.5rem' }}>{activeContent.icon}</span>
+                    {activeContent.icon && typeof activeContent.icon === 'function' && (
+                      <span style={{ marginRight: '0.5rem' }}>
+                        {React.createElement(activeContent.icon, { className: 'w-6 h-6' })}
+                      </span>
+                    )}
                     <h3 style={{ margin: 0 }}>{activeContent.label}</h3>
                   </div>
                   
@@ -1179,60 +1191,27 @@ export default function ConfigEditor({ token }: ConfigEditorProps) {
 
       {/* Action buttons */}
       <div style={{ display: 'flex', gap: '12px', marginTop: '1rem', justifyContent: 'flex-end', flexShrink: 0 }}>
-        <button 
+        <Button 
+          variant="secondary"
           onClick={handleSave} 
           disabled={saving}
-          style={{ 
-            backgroundColor: '#4b5563', 
-            color: '#fff',
-            border: '1px solid #555',
-            borderRadius: '6px',
-            padding: '0 16px',
-            height: '36px',
-            minWidth: '80px',
-            cursor: saving ? 'not-allowed' : 'pointer',
-            opacity: saving ? 0.5 : 1,
-            transition: 'opacity 0.2s, background-color 0.2s'
-          }}
         >
           {saving ? 'Saving...' : 'Save'}
-        </button>
-        <button 
+        </Button>
+        <Button 
+          variant="outline"
           onClick={handleApply} 
           disabled={saving}
-          style={{ 
-            backgroundColor: '#4b5563', 
-            color: '#fff',
-            border: '1px solid #555',
-            borderRadius: '6px',
-            padding: '0 16px',
-            height: '36px',
-            minWidth: '80px',
-            cursor: saving ? 'not-allowed' : 'pointer',
-            opacity: saving ? 0.5 : 1,
-            transition: 'opacity 0.2s, background-color 0.2s'
-          }}
         >
           {saving ? 'Applying...' : 'Apply'}
-        </button>
-        <button 
+        </Button>
+        <Button 
+          variant="default"
           onClick={handleSaveAndApply} 
           disabled={saving}
-          style={{ 
-            backgroundColor: '#646cff', 
-            color: '#fff',
-            border: '1px solid #747bff',
-            borderRadius: '6px',
-            padding: '0 16px',
-            height: '36px',
-            minWidth: '100px',
-            cursor: saving ? 'not-allowed' : 'pointer',
-            opacity: saving ? 0.5 : 1,
-            transition: 'opacity 0.2s, background-color 0.2s'
-          }}
         >
           {saving ? 'Saving...' : 'Save&Apply'}
-        </button>
+        </Button>
       </div>
 
       {/* Modals */}

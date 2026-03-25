@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
-import { RefreshCw, Plus } from 'lucide-react'
+import { RefreshCw, Plus, User } from 'lucide-react'
 import { Button } from './ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
 
@@ -62,7 +62,10 @@ export default function PersonaList({ token, onSelectPersona, onCreateNew }: Per
   return (
     <div className="p-4">
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-semibold">Personas</h2>
+        <h2 className="flex items-center gap-2 text-xl font-semibold">
+          <User className="w-6 h-6" />
+          Personas
+        </h2>
         <div className="flex gap-2">
           {onCreateNew && (
             <Button onClick={onCreateNew}>

@@ -17,14 +17,16 @@ Beyond the task management issues, the web portal has several UI consistency pro
 9. **Label Rename**: Change "Mood" to "Status" in dashboard
 10. **Emoji to Icons**: Replace emoji icons with Lucide icons in Config dashboard section navigation
 11. **Dashboard Title Consistency**: Standardize all dashboard titles to use consistent styling with icons
+12. **Task Dashboard Improvements**: Auto-load TaskEditor when expanding task cards, hide replace_string_in_file button in expanded view, show unsaved warning when clicking other tasks during editing
 
 ## Capabilities
 
 ### New Capabilities
 - `task-split-view`: Split-view interface for task management with structured form fields
 - `tool-name-api`: New API endpoint `/api/tools` that returns tool names and schemas from the registry
-- `unsaved-changes-dialog`: Confirmation dialog when navigating away from unsaved task edits
+- `unsaved-changes-dialog`: Confirmation dialog when navigating away from unsaved task edits (now applies to task card clicks too)
 - `live-uptime-counter`: Real-time uptime counter that continues counting after initial data load
+- `task-dashboard-improvements`: Auto-load TaskEditor on expand, hide replace_string_in_file button in expanded view, unified unsaved warning
 
 ### Modified Capabilities
 - `task-management`: UI requirements changing from full-page navigation to split-view panel, and from raw YAML editing to structured form fields

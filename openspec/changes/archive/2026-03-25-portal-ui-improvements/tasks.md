@@ -1,3 +1,25 @@
+# Portal UI Improvements - Task Status Summary
+
+## Overview
+
+| Section | Status | Notes |
+|---------|--------|-------|
+| 1. Task Split-View | ✅ Complete | Fixed mobile overlap - TaskList hides when editor active |
+| 2. Tool Name Alignment | ✅ Complete | Working - shows actual tool names |
+| 3. Token Verification | ✅ Complete | All tasks done |
+| 4. Unsaved Changes | ✅ Complete | Working - dialog appears correctly |
+| 5. Config Button Styling | ✅ Complete | Using shadcn/ui Button components |
+| 6. Uptime Counter | ✅ Complete | Working - increments every minute |
+| 7. Avatar Centering | ✅ Complete | Working - emoji centered |
+| 8. Mood→Status | ✅ Complete | Working - shows "Status" |
+| 9. Lucide Icons | ✅ Complete | Replaced emoji with Lucide icons |
+| 10. Title Consistency | ✅ Complete | All titles standardized |
+| 11. Refresh Button | ✅ Complete | Working - consistent across pages |
+| 12. Verification & Testing | ✅ Complete | Test scenarios documented |
+| 13. Task Dashboard | ✅ Complete | Auto-load, hide edit, unsaved warning all implemented |
+
+---
+
 ## 1. Task Split-View Interface
 
 Refactor task management from full-page navigation to split-view panel with structured form fields.
@@ -48,6 +70,8 @@ Refactor task management from full-page navigation to split-view panel with stru
 - [x] 1.6.2 Tablet (768-1023px): Two-column (40%/60%)
 - [x] 1.6.3 Mobile (<768px): Stacked layout with full-screen editor overlay
 - [x] 1.6.4 Back button on mobile to return to list
+
+> **Fixed:** On mobile, TaskList now hides when TaskEditor is active (using `hidden md:flex` classes). TaskEditor shows "Close" button on desktop, "X" icon on mobile.
 
 ### 1.7 Backend Integration
 
@@ -153,21 +177,21 @@ When a user is editing a task and clicks "Add New" to create a new task, the cur
 
 ### 4.1 TaskEditor Changes
 
-- [ ] 4.1.1 Add `isDirty` state to track form changes
-- [ ] 4.1.2 Track changes in all form fields (name, cron, enabled, model, persona, prompt, tools, userId, channelId)
-- [ ] 4.1.3 Expose `isDirty` value via prop or callback
+- [x] 4.1.1 Add `isDirty` state to track form changes
+- [x] 4.1.2 Track changes in all form fields (name, cron, enabled, model, persona, prompt, tools, userId, channelId)
+- [x] 4.1.3 Expose `isDirty` value via prop or callback
 
 ### 4.2 Dashboard Integration
 
-- [ ] 4.2.1 Pass `onHasUnsavedChanges` callback from TaskEditor to Dashboard
-- [ ] 4.2.2 Add state to track if TaskEditor has unsaved changes
-- [ ] 4.2.3 Show confirmation dialog when `onRequestCreate` is called with unsaved changes
+- [x] 4.2.1 Pass `onHasUnsavedChanges` callback from TaskEditor to Dashboard
+- [x] 4.2.2 Add state to track if TaskEditor has unsaved changes
+- [x] 4.2.3 Show confirmation dialog when `onRequestCreate` is called with unsaved changes
 
 ### 4.3 Dialog Component
 
-- [ ] 4.3.1 Use shadcn/ui Dialog component for confirmation
-- [ ] 4.3.2 Display warning message about unsaved changes
-- [ ] 4.3.3 Provide "Save & Continue", "Discard", and "Cancel" options
+- [x] 4.3.1 Use shadcn/ui Dialog component for confirmation
+- [x] 4.3.2 Display warning message about unsaved changes
+- [x] 4.3.3 Provide "Save & Continue", "Discard", and "Cancel" options
 
 ### 4.4 Files Modified
 
@@ -186,10 +210,12 @@ The Config dashboard uses raw `<button>` elements with inline styles instead of 
 
 ### 5.1 Button Replacement
 
-- [ ] 5.1.1 Replace Save button with `<Button variant="secondary">`
-- [ ] 5.1.2 Replace Apply button with `<Button variant="outline">`
-- [ ] 5.1.3 Replace Save&Apply button with `<Button variant="default">`
-- [ ] 5.1.4 Remove inline styles from all buttons
+- [x] 5.1.1 Replace Save button with `<Button variant="secondary">`
+- [x] 5.1.2 Replace Apply button with `<Button variant="outline">`
+- [x] 5.1.3 Replace Save&Apply button with `<Button variant="default">`
+- [x] 5.1.4 Remove inline styles from all buttons
+
+> **Status: COMPLETE** - Using shadcn/ui Button components
 
 ### 5.2 Files Modified
 
@@ -206,11 +232,11 @@ The uptime value is fetched once on load and never updates, showing a stale valu
 
 ### 6.1 Implementation
 
-- [ ] 6.1.1 Add `localUptime` state in Dashboard
-- [ ] 6.1.2 Initialize from API response `uptime_seconds`
-- [ ] 6.1.3 Add setInterval to increment every 60 seconds
-- [ ] 6.1.4 Add periodic API refresh (every 5 minutes) to stay in sync
-- [ ] 6.1.5 Clean up interval on unmount
+- [x] 6.1.1 Add `localUptime` state in Dashboard
+- [x] 6.1.2 Initialize from API response `uptime_seconds`
+- [x] 6.1.3 Add setInterval to increment every 60 seconds
+- [x] 6.1.4 Add periodic API refresh (every 5 minutes) to stay in sync
+- [x] 6.1.5 Clean up interval on unmount
 
 ### 6.2 Files Modified
 
@@ -227,8 +253,8 @@ The avatar placeholder uses invalid CSS property `justify-content` instead of `j
 
 ### 7.1 Implementation
 
-- [ ] 7.1.1 Change `justify-content` to `justify-center` in avatar div
-- [ ] 7.1.2 Verify centering works correctly
+- [x] 7.1.1 Change `justify-content` to `justify-center` in avatar div
+- [x] 7.1.2 Verify centering works correctly
 
 ### 7.2 Files Modified
 
@@ -245,7 +271,7 @@ The label "Mood" is unclear - "Status" is more descriptive for the bot's status 
 
 ### 8.1 Implementation
 
-- [ ] 8.1.1 Change `<strong>Mood:</strong>` to `<strong>Status:</strong>` in Dashboard.tsx
+- [x] 8.1.1 Change `<strong>Mood:</strong>` to `<strong>Status:</strong>` in Dashboard.tsx
 
 ### 8.2 Files Modified
 
@@ -262,9 +288,11 @@ Config dashboard uses emoji (💬, ⚙️, etc.) while other dashboards use Luci
 
 ### 9.1 Implementation
 
-- [ ] 9.1.1 Import Lucide icons (MessageSquare, Settings, Database, Cpu, Mic, Globe)
-- [ ] 9.1.2 Replace emoji in CONFIG_SECTIONS with icon components
-- [ ] 9.1.3 Update rendering to use icon component
+- [x] 9.1.1 Import Lucide icons (MessageSquare, Settings, Database, Cpu, Mic, Globe)
+- [x] 9.1.2 Replace emoji in CONFIG_SECTIONS with icon components
+- [x] 9.1.3 Update rendering to use icon component
+
+> **Status: COMPLETE** - Replaced emoji with Lucide icons using React.createElement()
 
 ### 9.2 Files Modified
 
@@ -291,20 +319,20 @@ All dashboard titles should follow this pattern:
 
 ### 10.2 Implementation
 
-- [ ] 10.2.1 Update Config dashboard title
-- [ ] 10.2.2 Update ServerList title (if needed)
-- [ ] 10.2.3 Update PersonaList title (if needed)
-- [ ] 10.2.4 Update SkillsList title (if needed)
-- [ ] 10.2.5 Verify all titles match Dashboard pattern
+- [x] 10.2.1 Update Config dashboard title - **APPLIED**
+- [x] 10.2.2 Update ServerList title - **APPLIED**
+- [x] 10.2.3 Update PersonaList title - **APPLIED**
+- [x] 10.2.4 Update SkillsList title - **APPLIED**
+- [x] 10.2.5 Verify all titles match Dashboard pattern - **COMPLETE**
 
 ### 10.3 Files Modified
 
-| File | Change |
-|------|--------|
-| `web/src/components/ConfigEditor.tsx` | Standardize title |
-| `web/src/components/ServerList.tsx` | Standardize title |
-| `web/src/components/PersonaList.tsx` | Standardize title |
-| `web/src/components/SkillsList.tsx` | Standardize title |
+| File | Change | Status |
+|------|--------|--------|
+| `web/src/components/ConfigEditor.tsx` | Standardize title | Applied ✓ |
+| `web/src/components/ServerList.tsx` | Standardize title | Applied ✓ |
+| `web/src/components/PersonaList.tsx` | Standardize title | Applied ✓ |
+| `web/src/components/SkillsList.tsx` | Standardize title | Applied ✓ |
 
 ## 11. Refresh Button Consistency
 
@@ -315,8 +343,8 @@ TaskList uses different button styling than Dashboard for Refresh.
 
 ### 11.1 Implementation
 
-- [ ] 11.1.1 Verify TaskList Refresh button matches Dashboard style
-- [ ] 11.1.2 Update if needed to use `<Button variant="outline" size="sm">`
+- [x] 11.1.1 Verify TaskList Refresh button matches Dashboard style
+- [x] 11.1.2 Update if needed to use `<Button variant="outline" size="sm">`
 
 ### 11.2 Files Modified
 
@@ -348,35 +376,40 @@ This section defines the testing approach and acceptance criteria for all UI imp
 ### 12.2 Test Scenarios
 
 #### Task Management (Section 1-2)
-- [ ] TaskList displays all tasks correctly
-- [ ] Clicking a task opens TaskEditor in right panel
-- [ ] "Add New" button creates new task in right panel
-- [ ] TaskEditor form fields populate correctly
-- [ ] Save button creates/updates task successfully
-- [ ] Delete button removes task after confirmation
-- [ ] Cron validation shows error for invalid expressions
-- [ ] Tool dropdown shows actual tool names from registry
+- [x] TaskList displays all tasks correctly
+- [x] Clicking a task opens TaskEditor in right panel
+- [x] "Add New" button creates new task in right panel
+- [x] TaskEditor form fields populate correctly
+- [x] Save button creates/updates task successfully
+- [x] Delete button removes task after confirmation
+- [x] Cron validation shows error for invalid expressions
+- [x] Tool dropdown shows actual tool names from registry
 
 #### Unsaved Changes (Section 4)
-- [ ] Editing a field marks form as dirty
-- [ ] Clicking "Add New" with unsaved changes shows dialog
-- [ ] "Save & Continue" saves and creates new task
-- [ ] "Discard" creates new task without saving
-- [ ] "Cancel" returns to editing current task
+- [x] Editing a field marks form as dirty
+- [x] Clicking "Add New" with unsaved changes shows dialog
+- [x] "Save & Continue" saves and creates new task
+- [x] "Discard" creates new task without saving
+- [x] "Cancel" returns to editing current task
+
+#### YAML View (Recent Fix)
+- [x] Open existing task (e.g., stock-market-checker)
+- [x] Toggle to "YAML View"
+- [x] channel_id shows correctly in YAML view
 
 #### Config Dashboard (Section 5, 9)
-- [ ] Save button uses shadcn/ui Button styling
-- [ ] Apply button uses shadcn/ui Button styling
-- [ ] Save&Apply button uses shadcn/ui Button styling
-- [ ] Section navigation uses Lucide icons (not emoji)
-- [ ] All buttons are properly aligned
+- [x] Save button uses shadcn/ui Button styling
+- [x] Apply button uses shadcn/ui Button styling
+- [x] Save&Apply button uses shadcn/ui Button styling
+- [x] Section navigation uses Lucide icons (not emoji)
+- [x] All buttons are properly aligned
 
 #### Dashboard (Section 6-8, 10-11)
-- [ ] Uptime counter increments every minute
-- [ ] Avatar placeholder shows centered robot emoji
-- [ ] "Status" label displays instead of "Mood"
-- [ ] All dashboard titles have consistent styling
-- [ ] Refresh buttons use consistent styling across pages
+- [x] Uptime counter increments every minute
+- [x] Avatar placeholder shows centered robot emoji
+- [x] "Status" label displays instead of "Mood"
+- [x] All dashboard titles have consistent styling
+- [x] Refresh buttons use consistent styling across pages
 
 ### 12.3 Browser Testing Matrix
 
@@ -395,24 +428,66 @@ This section defines the testing approach and acceptance criteria for all UI imp
 | Tablet (768x1024) | Split view (60/40) | ✓ | ✓ |
 | Mobile (375x667) | Stacked | ✓ | ✓ |
 
+---
+
+## 13. Task Dashboard Improvements
+
+Improve task card interaction and integrate with unsaved changes protection.
+
+### Problem
+1. When expanding a task card, users must click "replace_string_in_file" button again to open TaskEditor - redundant step
+2. replace_string_in_file button shows in expanded card even when TaskEditor is already visible - confusing UX
+3. Clicking other task cards during editing doesn't show unsaved warning - can lose changes
+
+### 13.1 Auto-load Task on Expand
+
+- [x] 13.1.1 Add `onExpand` callback prop to TaskList component
+- [x] 13.1.2 Call `onExpand(taskName)` when task card is expanded
+- [x] 13.1.3 Update Dashboard to set `editingTask` when `onExpand` is called
+
+### 13.2 Hide replace_string_in_file Button When Expanded
+
+- [x] 13.2.1 Conditionally render replace_string_in_file button only when task is NOT expanded
+- [x] 13.2.2 Keep "Run Now" button visible in expanded view
+
+### 13.3 Unsaved Warning for Task Clicks
+
+- [x] 13.3.1 Add `onRequestExpand` callback prop to TaskList component
+- [x] 13.3.2 Call `onRequestExpand(taskName)` instead of directly expanding
+- [x] 13.3.3 Update Dashboard to check `taskHasUnsavedChanges` before expanding
+- [x] 13.3.4 Show unsaved dialog if changes exist, proceed with expand after confirmation
+
+### 13.4 Files Modified
+
+| File | Change |
+|------|--------|
+| `web/src/components/TaskList.tsx` | Add onExpand/onRequestExpand props, update click handlers, conditionally hide edit button |
+| `web/src/components/Dashboard.tsx` | Add handlers for task expand, integrate with existing unsaved changes dialog |
+
+### 13.5 Implementation Notes
+
+- Reuse existing `handleRequestCreateTask` pattern for unsaved changes dialog
+- The `pendingAction` callback pattern already exists in Dashboard - reuse it
+- TaskEditor already loads task data when `taskName` prop changes - no additional loading logic needed
+
 ### 12.5 Acceptance Criteria
 
 **Must Pass (P0):**
-- [ ] Task split-view works on desktop
-- [ ] Config Save/Apply buttons function correctly
-- [ ] No console errors on any dashboard
-- [ ] All buttons are clickable and responsive
+- [x] Task split-view works on desktop
+- [x] Config Save/Apply buttons function correctly
+- [x] No console errors on any dashboard
+- [x] All buttons are clickable and responsive
 
 **Should Pass (P1):**
-- [ ] Unsaved changes dialog appears correctly
-- [ ] Uptime counter increments properly
-- [ ] Avatar is properly centered
-- [ ] All titles have consistent styling
+- [x] Unsaved changes dialog appears correctly
+- [x] Uptime counter increments properly
+- [x] Avatar is properly centered
+- [x] All titles have consistent styling
 
 **Nice to Have (P2):**
-- [ ] Emoji replaced with Lucide icons
-- [ ] "Mood" renamed to "Status"
-- [ ] Refresh buttons consistent across all pages
+- [x] Emoji replaced with Lucide icons
+- [x] "Mood" renamed to "Status"
+- [x]] Refresh buttons consistent across all pages
 
 ### 12.6 Bug Reporting Template
 

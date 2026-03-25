@@ -338,14 +338,14 @@ async def reload_tasks() -> dict:
             if task_config.get('enabled', True):
                 cron = task_config.get('cron') or task_config.get('schedule')
                 if cron:
-                    from llmcord import run_scheduled_task
+                    from llmcord import run_scheduled_task, parse_cron
                     _scheduler_ref.add_job(
                         run_scheduled_task,
                         'cron',
-                        cron=cron,
                         id=job_id,
                         replace_existing=True,
-                        args=[task_name, task_config]
+                        args=[task_name, task_config],
+                        **parse_cron(cron)
                     )
                     logger.info(f"Reloaded scheduled task: {task_name}")
         
@@ -419,14 +419,14 @@ async def reload_single_task(name: str) -> dict:
         if task_config.get('enabled', True):
             cron = task_config.get('cron') or task_config.get('schedule')
             if cron:
-                from llmcord import run_scheduled_task
+                from llmcord import run_scheduled_task, parse_cron
                 _scheduler_ref.add_job(
                     run_scheduled_task,
                     'cron',
-                    cron=cron,
                     id=job_id,
                     replace_existing=True,
-                    args=[task_name, task_config]
+                    args=[task_name, task_config],
+                    **parse_cron(cron)
                 )
                 logger.info(f"Reloaded single task: {task_name}")
                 return {"success": True, "message": f"Task '{task_name}' reloaded"}

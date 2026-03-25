@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
-import { RefreshCw, ChevronDown, ChevronUp, X } from 'lucide-react'
+import { RefreshCw, ChevronDown, ChevronUp, X, Server } from 'lucide-react'
 import { Button } from './ui/button'
 import { Card, CardContent } from './ui/card'
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from './ui/table'
@@ -143,7 +143,10 @@ export default function ServerList({ token }: ServerListProps) {
   return (
     <div className="p-4">
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-semibold">Servers</h2>
+        <h2 className="flex items-center gap-2 text-xl font-semibold">
+          <Server className="w-6 h-6" />
+          Servers
+        </h2>
         <Button variant="outline" onClick={fetchServers}>
           <RefreshCw className="w-4 h-4 mr-2" />
           Refresh

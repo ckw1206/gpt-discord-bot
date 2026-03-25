@@ -1,8 +1,16 @@
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../App'
 import axios from 'axios'
-import { RefreshCw } from 'lucide-react'
+import { RefreshCw, AlertTriangle } from 'lucide-react'
 import { Button } from './ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from './ui/dialog'
 import LogViewer from './LogViewer'
 import ConfigEditor from './ConfigEditor'
 import ServerList from './ServerList'
@@ -50,6 +58,8 @@ export default function Dashboard({ }: DashboardProps) {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'config' | 'servers' | 'personas' | 'tasks' | 'skills'>(getInitialTab)
   const [status, setStatus] = useState<BotStatus | null>(null)
   const [loading, setLoading] = useState(true)
+  // Local uptime counter that continues incrementing after initial data
+  const [localUptime, setLocalUptime] = useState<number | null>(null)
   
   // Persona editor state
   const [editingPersona, setEditingPersona] = useState<string | null>(null)  // null = list view, string = editing persona name
@@ -58,6 +68,13 @@ export default function Dashboard({ }: DashboardProps) {
   const [editingTask, setEditingTask] = useState<string | null | undefined>(null)
   // Key to force TaskList re-render (reset expanded state) when tab is clicked
   const [tasksKey, setTasksKey] = useState(0)
+  // Key to force TaskEditor re-render (refresh enabled checkbox after toggle)
+  const [taskEditorKey, setTaskEditorKey] = useState(0)
+  // Track unsaved changes in TaskEditor (Task 4.2.2)
+  const [taskHasUnsavedChanges, setTaskHasUnsavedChanges] = useState(false)
+  // Unsaved changes dialog state (Task 4.2.3)
+  const [showUnsavedDialog, setShowUnsavedDialog] = useState(false)
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null)
   
   // Use ref to always get current token value
   const tokenRef = useRef(token)
@@ -78,11 +95,77 @@ export default function Dashboard({ }: DashboardProps) {
     localStorage.setItem(STORAGE_KEY, tab)
   }
 
+  // Handle request to create new task with unsaved changes check (Task 4.2.3)
+  const handleRequestCreateTask = () => {
+    if (taskHasUnsavedChanges) {
+      // Show confirmation dialog
+      setPendingAction(() => () => {
+        setEditingTask('')
+        setTaskHasUnsavedChanges(false)
+      })
+      setShowUnsavedDialog(true)
+    } else {
+      setEditingTask('')
+    }
+  }
+
+  // Handle unsaved dialog actions (Task 4.2.3)
+  const handleUnsavedDiscard = () => {
+    setShowUnsavedDialog(false)
+    setTaskHasUnsavedChanges(false)
+    if (pendingAction) {
+      pendingAction()
+      setPendingAction(null)
+    }
+  }
+
+  const handleUnsavedCancel = () => {
+    setShowUnsavedDialog(false)
+    setPendingAction(null)
+  }
+
+  const handleUnsavedSave = () => {
+    // Close dialog - user should click Save in TaskEditor
+    // The pending action remains queued, user can proceed after saving
+    setShowUnsavedDialog(false)
+    // TODO: Could implement auto-save by calling TaskEditor's save method
+    // For now, user manually saves in TaskEditor, then can switch tasks
+  }
+
   useEffect(() => {
     if (token) {
       fetchStatus()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token])
+
+  // Initialize local uptime from API and set up counter
+  useEffect(() => {
+    if (status?.uptime_seconds !== undefined) {
+      setLocalUptime(status.uptime_seconds)
+    }
+  }, [status?.uptime_seconds])
+
+  // Increment local uptime every minute
+  useEffect(() => {
+    if (localUptime === null) return
+    
+    const interval = setInterval(() => {
+      setLocalUptime(prev => (prev ?? 0) + 60)
+    }, 60000)
+    
+    return () => clearInterval(interval)
+  }, [localUptime])
+
+  // Periodic API refresh every 5 minutes to stay in sync
+  useEffect(() => {
+    if (!token) return
+    
+    const refreshInterval = setInterval(() => {
+      fetchStatus()
+    }, 300000) // 5 minutes
+    
+    return () => clearInterval(refreshInterval)
   }, [token])
 
   const fetchStatus = async () => {
@@ -140,7 +223,7 @@ export default function Dashboard({ }: DashboardProps) {
                     className="w-[60px] h-[60px] rounded-full"
                   />
                 ) : (
-                  <div className="w-[60px] h-[60px] rounded-full bg-muted flex items-center justify-content text-2xl">
+                  <div className="w-[60px] h-[60px] rounded-full bg-muted flex items-center justify-center text-2xl">
                     🤖
                   </div>
                 )}
@@ -155,15 +238,15 @@ export default function Dashboard({ }: DashboardProps) {
               {/* Info in the middle */}
               <div className="flex-1 flex gap-6 flex-wrap items-center">
                 {status?.status_message && (
-                  <span><strong>Mood:</strong> {status.status_message}</span>
+                  <span><strong>Status:</strong> {status.status_message}</span>
                 )}
-                <span><strong>Uptime:</strong> {status ? formatUptime(status.uptime_seconds) : 'N/A'}</span>
+                <span><strong>Uptime:</strong> {localUptime !== null ? formatUptime(localUptime) : 'N/A'}</span>
                 <span><strong>Guilds:</strong> {status?.server_count ?? 0}</span>
                 <span><strong>Channels:</strong> {status?.channel_count ?? 0}</span>
               </div>
 
               {/* Quick Actions on the right */}
-              <Button variant="outline" size="sm" onClick={fetchStatus} className="flex-shrink-0">
+              <Button variant="outline" onClick={fetchStatus} className="flex-shrink-0">
                 <RefreshCw className="w-4 h-4 mr-2" />
                 Refresh
               </Button>
@@ -211,23 +294,56 @@ export default function Dashboard({ }: DashboardProps) {
         {activeTab === 'tasks' && token && (
           <div className="flex-1 min-h-0 overflow-hidden flex flex-col md:flex-row gap-4">
             {/* Left panel: TaskList - 50% on desktop, 40% on tablet, full on mobile */}
-            <div className="w-full md:w-1/2 lg:w-[40%] min-h-[300px] md:min-h-0 overflow-hidden flex flex-col">
+            {/* On mobile: hide when TaskEditor is active (editingTask is set) */}
+            <div className={`w-full md:w-1/2 lg:w-[40%] min-h-[300px] md:min-h-0 overflow-hidden flex flex-col ${editingTask ? 'hidden md:flex' : 'flex'}`}>
               <TaskList 
                 key={tasksKey}
                 token={token} 
-                selectedTask={editingTask !== undefined && editingTask !== null ? editingTask : null}
-                onRequestEdit={(name) => setEditingTask(name)}
-                onRequestCreate={() => setEditingTask('')}
+                editingTask={editingTask}
+                onRequestCreate={handleRequestCreateTask}
+                // Section 13: Task Dashboard Improvements
+                onExpand={(name) => {
+                  // Empty string means close editor (collapse card)
+                  if (name === '') {
+                    setEditingTask(undefined)
+                  } else {
+                    setEditingTask(name)
+                  }
+                }}
+                onRequestExpand={(name) => {
+                  if (taskHasUnsavedChanges) {
+                    setPendingAction(() => () => {
+                      setEditingTask(name)
+                      setTaskHasUnsavedChanges(false)
+                    })
+                    setShowUnsavedDialog(true)
+                  } else {
+                    setEditingTask(name)
+                  }
+                }}
+                // Refresh TaskEditor when task is modified (toggle, delete, etc.)
+                onTaskChange={() => setTaskEditorKey(k => k + 1)}
               />
             </div>
             {/* Right panel: TaskEditor - 50% on desktop, 60% on tablet, full on mobile */}
-            <div className="w-full md:w-1/2 lg:w-[60%] min-h-[400px] md:min-h-0 overflow-hidden flex flex-col">
+            {/* On mobile: show full width when active, hidden when no task selected */}
+            <div className={`w-full md:w-1/2 lg:w-[60%] min-h-[400px] md:min-h-0 overflow-hidden flex flex-col ${editingTask ? 'flex' : 'hidden md:flex'}`}>
               <TaskEditor
+                key={taskEditorKey}
                 token={token}
                 taskName={editingTask === '' ? undefined : editingTask}
-                onSave={() => setEditingTask(undefined)}
-                onSaveWithName={(name) => setEditingTask(name || undefined)}
+                onSave={() => {
+                  setEditingTask(undefined)
+                  // Refresh task list to show updated status
+                  setTasksKey(k => k + 1)
+                }}
+                onSaveWithName={(name) => {
+                  setEditingTask(name || undefined)
+                  // Refresh task list to show new task
+                  setTasksKey(k => k + 1)
+                }}
                 onCancel={() => setEditingTask(undefined)}
+                onDirtyChange={(isDirty) => setTaskHasUnsavedChanges(isDirty)}
               />
             </div>
           </div>
@@ -238,6 +354,32 @@ export default function Dashboard({ }: DashboardProps) {
             <SkillsList token={token} />
           </div>
         )}
+
+        {/* Unsaved Changes Confirmation Dialog (Task 4.2.3, 4.3) */}
+        <Dialog open={showUnsavedDialog} onOpenChange={setShowUnsavedDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-yellow-500" />
+                Unsaved Changes
+              </DialogTitle>
+              <DialogDescription>
+                You have unsaved changes in the current task. What would you like to do?
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="flex flex-col sm:flex-row gap-2">
+              <Button variant="outline" onClick={handleUnsavedCancel} className="flex-1">
+                Cancel
+              </Button>
+              <Button variant="default" onClick={handleUnsavedSave} className="flex-1">
+                Save
+              </Button>
+              <Button variant="destructive" onClick={handleUnsavedDiscard} className="flex-1">
+                Discard
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </main>
     </div>
   )

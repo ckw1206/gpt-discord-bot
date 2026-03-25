@@ -5,7 +5,6 @@ import {
   RefreshCw, 
   ChevronDown, 
   ChevronRight, 
-  Pencil, 
   Plus, 
   Play, 
   Clock
@@ -28,18 +27,19 @@ interface TaskInfo {
 
 interface TaskListProps {
   token: string
-  onSelectTask?: (name: string) => void
   onCreateNew?: () => void
   // If provided, show editor inline instead of callbacks
   editingTask?: string | null
   onEditComplete?: () => void
-  onRequestEdit?: (name: string) => void
   onRequestCreate?: () => void
-  // Currently selected task for split-view mode (highlights the active card)
-  selectedTask?: string | null
+  // Section 13: Task Dashboard Improvements
+  onExpand?: (name: string) => void  // Called when task is expanded (auto-loads in editor)
+  onRequestExpand?: (name: string) => void  // Called when requesting to expand (checks unsaved first)
+  // Callback when task is modified (toggle, delete, etc.) - triggers TaskEditor refresh
+  onTaskChange?: () => void
 }
 
-export default function TaskList({ token, onSelectTask, onCreateNew, onRequestEdit, onRequestCreate, selectedTask }: TaskListProps) {
+export default function TaskList({ token, onCreateNew, onRequestCreate, editingTask, onExpand, onRequestExpand, onTaskChange }: TaskListProps) {
   const [tasks, setTasks] = useState<TaskInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -54,6 +54,13 @@ export default function TaskList({ token, onSelectTask, onCreateNew, onRequestEd
   useEffect(() => {
     fetchTasks()
   }, [])
+
+  // Sync expanded state with editingTask prop (Section 13.1: auto-expand when editing)
+  useEffect(() => {
+    if (editingTask) {
+      setExpandedTask(editingTask)
+    }
+  }, [editingTask])
 
   const fetchTasks = async () => {
     try {
@@ -82,6 +89,9 @@ export default function TaskList({ token, onSelectTask, onCreateNew, onRequestEd
       
       // Refresh the list
       await fetchTasks()
+      
+      // Notify parent (Dashboard) that task was modified - refreshes TaskEditor if open
+      onTaskChange?.()
     } catch (err: any) {
       console.error('Failed to toggle task:', err)
       setError(err.response?.data?.detail || 'Failed to toggle task')
@@ -221,17 +231,33 @@ export default function TaskList({ token, onSelectTask, onCreateNew, onRequestEd
       ) : (
         <div className="grid gap-4">
           {tasks.map((task) => (
-            <Card 
-              key={task.name} 
-              className={`
-                ${expandedTask === task.name ? 'border-primary' : ''}
-                ${selectedTask === task.name ? 'ring-2 ring-primary ring-offset-2' : ''}
-              `}
-            >
+            <Card key={task.name} className={expandedTask === task.name ? 'border-primary' : ''}>
               {/* Card Header - Click to expand */}
               <CardHeader 
                 className="cursor-pointer py-4"
-                onClick={() => setExpandedTask(expandedTask === task.name ? null : task.name)}
+                onClick={() => {
+                  // If already expanded, collapse it (toggle behavior)
+                  if (expandedTask === task.name) {
+                    setExpandedTask(null)
+                    // Clear editor as well
+                    if (onExpand) {
+                      onExpand('')
+                    }
+                    return
+                  }
+                  
+                  // Section 13: Use onRequestExpand to check unsaved changes first
+                  if (onRequestExpand) {
+                    onRequestExpand(task.name)
+                  } else {
+                    // Fallback to original behavior
+                    setExpandedTask(task.name)
+                  }
+                  // Also trigger auto-load to editor
+                  if (onExpand) {
+                    onExpand(task.name)
+                  }
+                }}
               >
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
@@ -297,7 +323,9 @@ export default function TaskList({ token, onSelectTask, onCreateNew, onRequestEd
                       {runningTask === task.name ? 'Running...' : 'Run Now'}
                     </Button>
                     
-                    {/* Edit button */}
+                    {/* Edit button - hidden when expanded (TaskEditor is already showing) */}
+                    {/* Section 13.2: Hide edit button when task is expanded */}
+                    {/*
                     {onSelectTask && (
                       <Button 
                         variant="outline"
@@ -316,6 +344,7 @@ export default function TaskList({ token, onSelectTask, onCreateNew, onRequestEd
                         Edit
                       </Button>
                     )}
+                    */}
                   </div>
                 </CardContent>
               )}

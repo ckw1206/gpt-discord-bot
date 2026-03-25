@@ -42,6 +42,7 @@ interface TaskEditorProps {
   onSave?: () => void
   onSaveWithName?: (name: string) => void  // Called after creating new task with the name
   onCancel?: () => void
+  onDirtyChange?: (isDirty: boolean) => void  // Callback for unsaved changes (Task 4.1.3)
 }
 
 // Default template for new tasks
@@ -49,7 +50,8 @@ const TEMPLATE_CONFIG = {
   name: 'new-task',
   enabled: true,
   cron: '0 * * * *',
-  'user_id|channel_id': '1234567890',
+  user_id: '',
+  channel_id: '',
   model: 'google/gemini-2.5-flash',
   prompt: 'Your task prompt here',
   tools: [],
@@ -68,7 +70,7 @@ const AVAILABLE_MODELS = [
   'meta-llama/llama-3.1-70b-instruct',
 ]
 
-export default function TaskEditor({ token, taskName, onSave, onSaveWithName, onCancel }: TaskEditorProps) {
+export default function TaskEditor({ token, taskName, onSave, onSaveWithName, onCancel, onDirtyChange }: TaskEditorProps) {
   // Form state - structured fields
   const [name, setName] = useState('')
   const [cron, setCron] = useState('0 * * * *')
@@ -79,7 +81,6 @@ export default function TaskEditor({ token, taskName, onSave, onSaveWithName, on
   const [tools, setTools] = useState<string[]>([])
   const [userId, setUserId] = useState('')
   const [channelId, setChannelId] = useState('')
-  const [useCombinedId, setUseCombinedId] = useState(true)
   
   // UI state
   const [originalName, setOriginalName] = useState('')
@@ -90,9 +91,45 @@ export default function TaskEditor({ token, taskName, onSave, onSaveWithName, on
   const [configText, setConfigText] = useState('')
   const [validationErrors, setValidationErrors] = useState<string[]>([])
   
+  // Track unsaved changes (Task 4.1.1)
+  // Note: isDirty is used via onDirtyChange callback, not directly read
+  const [_isDirty, setIsDirty] = useState(false)
+  
   // Available options (loaded from config)
   const [availableTools, setAvailableTools] = useState<string[]>([])
   const [availablePersonas, setAvailablePersonas] = useState<string[]>([])
+
+  // Track original values for dirty checking (Task 4.1.2)
+  const [originalValues, setOriginalValues] = useState({
+    name: '',
+    cron: '0 * * * *',
+    enabled: true,
+    model: 'google/gemini-2.5-flash',
+    persona: '',
+    prompt: '',
+    tools: [] as string[],
+    userId: '',
+    channelId: '',
+  })
+
+  // Update isDirty when form values change (Task 4.1.2)
+  useEffect(() => {
+    // Don't update dirty state while loading - wait for data to be ready
+    if (loading) return
+    
+    const currentValues = { name, cron, enabled, model, persona, prompt, tools, userId, channelId }
+    const hasChanges = JSON.stringify(currentValues) !== JSON.stringify(originalValues)
+    setIsDirty(hasChanges)
+    // Notify parent component of dirty state change (Task 4.1.3)
+    onDirtyChange?.(hasChanges)
+  }, [name, cron, enabled, model, persona, prompt, tools, userId, channelId, originalValues, onDirtyChange, loading])
+
+  // Update YAML view whenever form fields change (after loading is complete)
+  useEffect(() => {
+    if (!loading) {
+      updateYamlFromForm()
+    }
+  }, [name, cron, enabled, model, persona, prompt, tools, userId, channelId, loading])
 
   const authHeaders = {
     headers: { Authorization: `Bearer ${token}` }
@@ -134,10 +171,8 @@ export default function TaskEditor({ token, taskName, onSave, onSaveWithName, on
     if (taskName) {
       fetchTask(taskName)
     } else if (taskName === undefined || taskName === null || taskName === '') {
-      // New task - use template
-      if (!originalName) {
-        loadTemplate()
-      }
+      // New task - always use template (reset form for new task)
+      loadTemplate()
     }
   }, [taskName])
 
@@ -149,10 +184,21 @@ export default function TaskEditor({ token, taskName, onSave, onSaveWithName, on
     setPersona(TEMPLATE_CONFIG.persona)
     setPrompt(TEMPLATE_CONFIG.prompt)
     setTools(TEMPLATE_CONFIG.tools)
-    setUserId(String(TEMPLATE_CONFIG['user_id|channel_id']))
-    setChannelId('')
-    setUseCombinedId(true)
+    setUserId(String(TEMPLATE_CONFIG.user_id || ''))
+    setChannelId(String(TEMPLATE_CONFIG.channel_id || ''))
     setOriginalName('')
+    // Store original values for dirty checking (Task 4.1.2)
+    setOriginalValues({
+      name: TEMPLATE_CONFIG.name,
+      cron: TEMPLATE_CONFIG.cron,
+      enabled: TEMPLATE_CONFIG.enabled,
+      model: TEMPLATE_CONFIG.model,
+      persona: TEMPLATE_CONFIG.persona,
+      prompt: TEMPLATE_CONFIG.prompt,
+      tools: TEMPLATE_CONFIG.tools,
+      userId: String(TEMPLATE_CONFIG.user_id),
+      channelId: String(TEMPLATE_CONFIG.channel_id),
+    })
     setLoading(false)
     updateYamlFromForm()
   }
@@ -164,8 +210,10 @@ export default function TaskEditor({ token, taskName, onSave, onSaveWithName, on
       const task: TaskDetail = res.data
       const config = task.config
       
-      setName(config.name || task.name || '')
-      setOriginalName(config.name || task.name || '')
+      // Use task.name (filename from API) as the canonical name, not config.name
+      // This ensures delete/update operations use the correct filename
+      setName(task.name || '')
+      setOriginalName(task.name || '')
       setCron(config.cron || '0 * * * *')
       setEnabled(config.enabled !== false)
       setModel(config.model || 'google/gemini-2.5-flash')
@@ -173,16 +221,22 @@ export default function TaskEditor({ token, taskName, onSave, onSaveWithName, on
       setPrompt(config.prompt || '')
       setTools(config.tools || [])
       
-      // Handle ID fields - support both separate and combined formats
-      if (config['user_id|channel_id']) {
-        setUserId(String(config['user_id|channel_id']))
-        setChannelId('')
-        setUseCombinedId(true)
-      } else {
-        setUserId(String(config.user_id || ''))
-        setChannelId(String(config.channel_id || ''))
-        setUseCombinedId(false)
-      }
+      // Store original values for dirty checking (Task 4.1.2)
+      setOriginalValues({
+        name: config.name || task.name || '',
+        cron: config.cron || '0 * * * *',
+        enabled: config.enabled !== false,
+        model: config.model || 'google/gemini-2.5-flash',
+        persona: config.persona || '',
+        prompt: config.prompt || '',
+        tools: config.tools || [],
+        userId: String(config.user_id || ''),
+        channelId: String(config.channel_id || ''),
+      })
+      
+      // Handle ID fields - always use separate user_id and channel_id
+      setUserId(String(config.user_id || ''))
+      setChannelId(String(config.channel_id || ''))
       
       updateYamlFromForm()
     } catch (err: any) {
@@ -213,20 +267,29 @@ export default function TaskEditor({ token, taskName, onSave, onSaveWithName, on
       config.tools = tools
     }
     
-    // Add ID fields based on mode
-    if (useCombinedId && userId) {
-      config['user_id|channel_id'] = userId
-    } else {
-      if (userId) config.user_id = userId
-      if (channelId) config.channel_id = channelId
-    }
+    // Add ID fields - always separate user_id and channel_id
+    if (userId) config.user_id = userId
+    if (channelId) config.channel_id = channelId
     
     return config
   }
 
   // Update YAML text from form (for advanced view)
+  // Note: We pass values directly to avoid React state async issues
   const updateYamlFromForm = () => {
-    const config = buildConfig()
+    const config: Record<string, any> = {
+      name,
+      enabled,
+      cron,
+      model,
+      prompt,
+    }
+    
+    if (persona) config.persona = persona
+    if (tools.length > 0) config.tools = tools
+    if (userId) config.user_id = userId
+    if (channelId) config.channel_id = channelId
+    
     setConfigText(yaml.dump(config, { indent: 2, lineWidth: -1 }))
   }
 
@@ -256,7 +319,7 @@ export default function TaskEditor({ token, taskName, onSave, onSaveWithName, on
     
     // At least one ID field required
     if (!userId && !channelId) {
-      errors.push('Either User ID, Channel ID, or Combined ID is required')
+      errors.push('Either User ID or Channel ID is required')
     }
     
     return errors
@@ -278,11 +341,12 @@ export default function TaskEditor({ token, taskName, onSave, onSaveWithName, on
       setSaving(true)
       
       if (originalName && originalName !== name) {
-        // Name changed - need to delete old and create new
+        // Name changed - create new task first, then delete old
+        await axios.post(`${API_BASE}/tasks`, { name, config }, authHeaders)
         await axios.delete(`${API_BASE}/tasks/${originalName}`, authHeaders)
-      }
-      
-      if (originalName && originalName === name) {
+        toast.success('Task renamed!')
+        onSaveWithName?.(name)
+      } else if (originalName && originalName === name) {
         // Update existing
         await axios.put(`${API_BASE}/tasks/${name}`, { config }, authHeaders)
         toast.success('Task saved!')
@@ -357,8 +421,12 @@ export default function TaskEditor({ token, taskName, onSave, onSaveWithName, on
       {/* Header */}
       <div className="flex justify-between items-center p-4 border-b">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={onCancel}>
+          <Button variant="ghost" size="icon" onClick={onCancel} className="md:hidden">
             <X className="w-5 h-5" />
+          </Button>
+          <Button variant="ghost" onClick={onCancel} className="hidden md:inline-flex">
+            <X className="w-5 h-5 mr-2" />
+            Close
           </Button>
           <h2 className="text-xl font-semibold m-0">
             {isNewTask ? 'New Task' : `Edit: ${originalName}`}
@@ -475,26 +543,14 @@ export default function TaskEditor({ token, taskName, onSave, onSaveWithName, on
                 </Label>
               </div>
 
-              {/* ID Fields */}
+              {/* ID Fields - Always separate user_id and channel_id */}
               <div className="space-y-4">
                 <Label>Discord ID *</Label>
-                <div className="flex items-center gap-2 mb-2">
-                  <Checkbox
-                    id="useCombinedId"
-                    checked={useCombinedId}
-                    onCheckedChange={(checked) => {
-                      setUseCombinedId(checked === true)
-                      updateYamlFromForm()
-                    }}
-                  />
-                  <Label htmlFor="useCombinedId" className="cursor-pointer text-sm">
-                    Use combined user_id|channel_id field
-                  </Label>
-                </div>
-                
-                {useCombinedId ? (
+                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
+                    <Label htmlFor="userId">User ID</Label>
                     <Input
+                      id="userId"
                       type="text"
                       value={userId}
                       onChange={(e) => {
@@ -503,40 +559,21 @@ export default function TaskEditor({ token, taskName, onSave, onSaveWithName, on
                       }}
                       placeholder="1234567890"
                     />
-                    <p className="text-sm text-muted-foreground">
-                      Discord user or channel ID (will be used for both)
-                    </p>
                   </div>
-                ) : (
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="userId">User ID</Label>
-                      <Input
-                        id="userId"
-                        type="text"
-                        value={userId}
-                        onChange={(e) => {
-                          setUserId(e.target.value)
-                          updateYamlFromForm()
-                        }}
-                        placeholder="1234567890"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="channelId">Channel ID</Label>
-                      <Input
-                        id="channelId"
-                        type="text"
-                        value={channelId}
-                        onChange={(e) => {
-                          setChannelId(e.target.value)
-                          updateYamlFromForm()
-                        }}
-                        placeholder="1234567890"
-                      />
-                    </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="channelId">Channel ID</Label>
+                    <Input
+                      id="channelId"
+                      type="text"
+                      value={channelId}
+                      onChange={(e) => {
+                        setChannelId(e.target.value)
+                        updateYamlFromForm()
+                      }}
+                      placeholder="1234567890"
+                    />
                   </div>
-                )}
+                </div>
               </div>
 
               {/* Model Field */}
