@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("discord-bot.voice")
 
 # Pattern to match ${ENV_VAR} in config values
 ENV_VAR_PATTERN = re.compile(r'\$\{(\w+)\}')

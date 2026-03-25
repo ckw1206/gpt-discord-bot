@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "name": "postgres-pro",
+  "owner": "jeffallan",
+  "repo": "claude-skills",
+  "path": "skills/postgres-pro",
+  "branch": "main",
+  "sha": "b0f30d158c7644284d0ad1f85d6876a9dcc96091",
+  "source": "manual"
+}

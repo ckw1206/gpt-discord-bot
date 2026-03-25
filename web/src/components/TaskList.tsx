@@ -35,9 +35,11 @@ interface TaskListProps {
   onEditComplete?: () => void
   onRequestEdit?: (name: string) => void
   onRequestCreate?: () => void
+  // Currently selected task for split-view mode (highlights the active card)
+  selectedTask?: string | null
 }
 
-export default function TaskList({ token, onSelectTask, onCreateNew, onRequestEdit, onRequestCreate }: TaskListProps) {
+export default function TaskList({ token, onSelectTask, onCreateNew, onRequestEdit, onRequestCreate, selectedTask }: TaskListProps) {
   const [tasks, setTasks] = useState<TaskInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -219,7 +221,13 @@ export default function TaskList({ token, onSelectTask, onCreateNew, onRequestEd
       ) : (
         <div className="grid gap-4">
           {tasks.map((task) => (
-            <Card key={task.name} className={expandedTask === task.name ? 'border-primary' : ''}>
+            <Card 
+              key={task.name} 
+              className={`
+                ${expandedTask === task.name ? 'border-primary' : ''}
+                ${selectedTask === task.name ? 'ring-2 ring-primary ring-offset-2' : ''}
+              `}
+            >
               {/* Card Header - Click to expand */}
               <CardHeader 
                 className="cursor-pointer py-4"

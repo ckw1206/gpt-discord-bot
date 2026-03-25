@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "name": "better-auth",
+  "owner": "rafaelcalleja",
+  "repo": "claude-market-place",
+  "path": "plugins/claudekit-skills/skills/better-auth",
+  "branch": "master",
+  "sha": "3c735eb62487544bd8dbf4b203c80cc4c10c9946",
+  "source": "manual"
+}

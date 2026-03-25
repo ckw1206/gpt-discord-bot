@@ -20,7 +20,7 @@ from .tts import AzureTTS, create_tts, Voice
 from .stt import AzureSTT, create_stt
 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("discord-bot.voice")
 
 
 class VoiceCog(commands.Cog):

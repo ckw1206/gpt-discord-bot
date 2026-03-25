@@ -44,6 +44,10 @@ behavior:
   use_plain_responses: false
   show_embed_color: true
   allow_dms: true
+  # Log level: TRACE, DEBUG, INFO, WARNING, ERROR, CRITICAL
+  # Optional: defaults to DEBUG in development, INFO in production
+  # Can be overridden by LOG_LEVEL environment variable
+  # log_level: INFO
 
 # =============================================================================
 # LLM Settings
@@ -172,6 +176,8 @@ portal:
   password: ${PORTAL_PASSWORD:}
   logs:
     retention_days: 7
+    # Log levels to capture in portal database: INFO, WARNING, ERROR
+    # NOTE: DEBUG causes massive I/O from SQLAlchemy - only enable temporarily!
     levels: [INFO, WARNING, ERROR]
   # require_discord_admin: true
 

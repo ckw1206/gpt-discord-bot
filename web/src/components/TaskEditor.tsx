@@ -1,13 +1,33 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import axios from 'axios'
 import yaml from 'js-yaml'
 import { toast } from 'react-hot-toast'
-import Modal from './Modal'
-import { ArrowLeft, Trash2 } from 'lucide-react'
+import { Trash2, X, AlertCircle } from 'lucide-react'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
+import { Label } from './ui/label'
+import { Checkbox } from './ui/checkbox'
+import { ScrollArea } from './ui/scroll-area'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from './ui/select'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from './ui/dialog'
 
 const API_BASE = '/api'
+
+// Cron validation regex - accepts any 5 space-separated fields (allows day names like MON-FRI)
+const CRON_REGEX = /^\S+\s+\S+\s+\S+\s+\S+\s+\S+$/
 
 interface TaskDetail {
   name: string
@@ -29,28 +49,84 @@ const TEMPLATE_CONFIG = {
   name: 'new-task',
   enabled: true,
   cron: '0 * * * *',
-  'user_id|channel_id': 1234567890,
+  'user_id|channel_id': '1234567890',
   model: 'google/gemini-2.5-flash',
   prompt: 'Your task prompt here',
   tools: [],
   persona: ''
 }
 
+// Available models (common models used in the bot)
+const AVAILABLE_MODELS = [
+  'google/gemini-2.5-flash',
+  'google/gemini-2.0-flash',
+  'openai/gpt-4o-mini',
+  'openai/gpt-4o',
+  'anthropic/claude-3-5-sonnet-20241022',
+  'anthropic/claude-3-haiku-20240307',
+  'mistralai/mistral-small-250111',
+  'meta-llama/llama-3.1-70b-instruct',
+]
+
 export default function TaskEditor({ token, taskName, onSave, onSaveWithName, onCancel }: TaskEditorProps) {
-  const [name, setName] = useState(taskName || '')
-  const [configText, setConfigText] = useState('')
-  const [originalName, setOriginalName] = useState(taskName || '')
-  const [loading, setLoading] = useState(!!taskName)
+  // Form state - structured fields
+  const [name, setName] = useState('')
+  const [cron, setCron] = useState('0 * * * *')
+  const [enabled, setEnabled] = useState(true)
+  const [model, setModel] = useState('google/gemini-2.5-flash')
+  const [persona, setPersona] = useState('')
+  const [prompt, setPrompt] = useState('')
+  const [tools, setTools] = useState<string[]>([])
+  const [userId, setUserId] = useState('')
+  const [channelId, setChannelId] = useState('')
+  const [useCombinedId, setUseCombinedId] = useState(true)
+  
+  // UI state
+  const [originalName, setOriginalName] = useState('')
+  const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
-  const [validationError, setValidationError] = useState<string | null>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
+  const [showYamlView, setShowYamlView] = useState(false)
+  const [configText, setConfigText] = useState('')
+  const [validationErrors, setValidationErrors] = useState<string[]>([])
   
-  // Flexbox auto-resize: editor fills available space automatically
-  // No manual resize logic needed - browser handles it natively
+  // Available options (loaded from config)
+  const [availableTools, setAvailableTools] = useState<string[]>([])
+  const [availablePersonas, setAvailablePersonas] = useState<string[]>([])
 
   const authHeaders = {
     headers: { Authorization: `Bearer ${token}` }
+  }
+
+  // Load available tools and personas on mount
+  useEffect(() => {
+    fetchTools()
+    fetchPersonas()
+  }, [])
+
+  const fetchTools = async () => {
+    try {
+      // Use /tools endpoint to get actual tool names from registry
+      const res = await axios.get(`${API_BASE}/tools`, authHeaders)
+      if (res.data && Array.isArray(res.data)) {
+        setAvailableTools(res.data.map((t: any) => t.name))
+      }
+    } catch (err) {
+      console.error('Failed to fetch tools:', err)
+      // Fallback to common tools from registry
+      setAvailableTools(['web_search', 'visuals_core', 'get_market_prices', 'google_tools'])
+    }
+  }
+
+  const fetchPersonas = async () => {
+    try {
+      const res = await axios.get(`${API_BASE}/personas`, authHeaders)
+      if (res.data && Array.isArray(res.data)) {
+        setAvailablePersonas(res.data.map((p: any) => p.name))
+      }
+    } catch (err) {
+      console.error('Failed to fetch personas:', err)
+    }
   }
 
   // Load existing task if editing
@@ -58,31 +134,57 @@ export default function TaskEditor({ token, taskName, onSave, onSaveWithName, on
     if (taskName) {
       fetchTask(taskName)
     } else if (taskName === undefined || taskName === null || taskName === '') {
-      // New task - use template only when taskName is explicitly undefined/null/empty
-      // This prevents re-loading template when switching from new to edit mode
+      // New task - use template
       if (!originalName) {
-        setConfigText(yaml.dump(TEMPLATE_CONFIG, { indent: 2, lineWidth: -1 }))
+        loadTemplate()
       }
     }
   }, [taskName])
 
-  // Keep internal state in sync when prop changes (for navigation after save)
-  useEffect(() => {
-    if (taskName !== originalName) {
-      setName(taskName || '')
-      setOriginalName(taskName || '')
-    }
-  }, [taskName])
+  const loadTemplate = () => {
+    setName(TEMPLATE_CONFIG.name)
+    setCron(TEMPLATE_CONFIG.cron)
+    setEnabled(TEMPLATE_CONFIG.enabled)
+    setModel(TEMPLATE_CONFIG.model)
+    setPersona(TEMPLATE_CONFIG.persona)
+    setPrompt(TEMPLATE_CONFIG.prompt)
+    setTools(TEMPLATE_CONFIG.tools)
+    setUserId(String(TEMPLATE_CONFIG['user_id|channel_id']))
+    setChannelId('')
+    setUseCombinedId(true)
+    setOriginalName('')
+    setLoading(false)
+    updateYamlFromForm()
+  }
 
   const fetchTask = async (taskName: string) => {
     try {
       setLoading(true)
       const res = await axios.get(`${API_BASE}/tasks/${taskName}`, authHeaders)
       const task: TaskDetail = res.data
-      setName(task.name)
-      setOriginalName(task.name)
-      // Convert config to YAML string
-      setConfigText(yaml.dump(task.config, { indent: 2, lineWidth: -1 }))
+      const config = task.config
+      
+      setName(config.name || task.name || '')
+      setOriginalName(config.name || task.name || '')
+      setCron(config.cron || '0 * * * *')
+      setEnabled(config.enabled !== false)
+      setModel(config.model || 'google/gemini-2.5-flash')
+      setPersona(config.persona || '')
+      setPrompt(config.prompt || '')
+      setTools(config.tools || [])
+      
+      // Handle ID fields - support both separate and combined formats
+      if (config['user_id|channel_id']) {
+        setUserId(String(config['user_id|channel_id']))
+        setChannelId('')
+        setUseCombinedId(true)
+      } else {
+        setUserId(String(config.user_id || ''))
+        setChannelId(String(config.channel_id || ''))
+        setUseCombinedId(false)
+      }
+      
+      updateYamlFromForm()
     } catch (err: any) {
       console.error('Failed to fetch task:', err)
       toast.error(err.response?.data?.detail || 'Failed to load task')
@@ -91,98 +193,86 @@ export default function TaskEditor({ token, taskName, onSave, onSaveWithName, on
     }
   }
 
-  const validateYaml = (text: string): { valid: boolean; error?: string; parsed?: any } => {
-    // Step 1: Check for common lint issues before parsing
-    const lines = text.split('\n')
-    
-    // Check for tabs (YAML requires spaces for indentation)
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].includes('\t')) {
-        return { valid: false, error: `Line ${i + 1}: Use spaces for indentation, not tabs` }
-      }
+  // Build config object from form fields
+  const buildConfig = (): Record<string, any> => {
+    const config: Record<string, any> = {
+      name,
+      enabled,
+      cron,
+      model,
+      prompt,
     }
     
-    // Check for inconsistent indentation (must be multiples of 2)
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]
-      if (line.trim() === '' || line.trim().startsWith('#')) continue
-      const indent = line.search(/\S/)
-      if (indent > 0 && indent % 2 !== 0) {
-        return { valid: false, error: `Line ${i + 1}: Indentation must be a multiple of 2 spaces` }
-      }
+    // Add persona if specified
+    if (persona) {
+      config.persona = persona
     }
     
-    // Step 2: Parse YAML
-    try {
-      const parsed: any = yaml.load(text)
-      if (!parsed || typeof parsed !== 'object') {
-        return { valid: false, error: 'Task config must be a YAML object' }
-      }
-      
-      // FIX: JavaScript loses precision for large integers (> 2^53)
-      // Discord IDs have 17-19 digits, but JS Number only has 52-bit mantissa (~16 digits)
-      // Example: 1478227992747704442 → 1478227992747704300
-      // Solution: Preserve ID fields as strings since Discord IDs are numeric strings anyway
-      const idFields = ['user_id', 'channel_id', 'user_id|channel_id']
-      for (const field of idFields) {
-        if (field in parsed && parsed[field] !== undefined && parsed[field] !== null) {
-          parsed[field] = String(parsed[field])
-        }
-      }
-      
-      // Step 3: Check for duplicate keys (yaml.load doesn't detect this)
-      const seenKeys: Record<string, number> = {}
-      for (const line of lines) {
-        const match = line.match(/^(\s*)([^:#\s]+):/)
-        if (match) {
-          const key = match[2]
-          if (seenKeys[key] !== undefined) {
-            return { valid: false, error: `Duplicate key "${key}" - each key must be unique` }
-          }
-          seenKeys[key] = 1
-        }
-      }
-      
-      // Step 4: Validate required fields
-      const requiredFields = ['name', 'enabled', 'cron', 'prompt']
-      const missingFields = requiredFields.filter(field => !(field in parsed))
-      if (missingFields.length > 0) {
-        return { valid: false, error: `Missing required fields: ${missingFields.join(', ')}` }
-      }
-      
-      // Check for at least one of the ID fields
-      const hasUserId = 'user_id' in parsed
-      const hasChannelId = 'channel_id' in parsed
-      const hasCombinedId = 'user_id|channel_id' in parsed
-      if (!hasUserId && !hasChannelId && !hasCombinedId) {
-        return { valid: false, error: 'Missing required field: user_id, channel_id, or user_id|channel_id' }
-      }
-      
-      return { valid: true, parsed }
-    } catch (e: any) {
-      // Extract line number from YAML error if available
-      const message = e.message || 'Invalid YAML'
-      const lineMatch = message.match(/line (\d+)/i)
-      const lineInfo = lineMatch ? ` at line ${lineMatch[1]}` : ''
-      return { valid: false, error: message + lineInfo }
+    // Add tools if specified
+    if (tools.length > 0) {
+      config.tools = tools
     }
+    
+    // Add ID fields based on mode
+    if (useCombinedId && userId) {
+      config['user_id|channel_id'] = userId
+    } else {
+      if (userId) config.user_id = userId
+      if (channelId) config.channel_id = channelId
+    }
+    
+    return config
+  }
+
+  // Update YAML text from form (for advanced view)
+  const updateYamlFromForm = () => {
+    const config = buildConfig()
+    setConfigText(yaml.dump(config, { indent: 2, lineWidth: -1 }))
+  }
+
+  // Validate form fields
+  const validateForm = (): string[] => {
+    const errors: string[] = []
+    
+    // Required fields
+    if (!name || name.trim() === '') {
+      errors.push('Name is required')
+    }
+    
+    // Name format validation
+    if (name && !/^[a-z0-9-]+$/.test(name)) {
+      errors.push('Name can only contain lowercase letters, numbers, and hyphens')
+    }
+    
+    // Cron validation
+    if (!cron || !CRON_REGEX.test(cron)) {
+      errors.push('Invalid cron expression (use format: minute hour day month weekday)')
+    }
+    
+    // Prompt required
+    if (!prompt || prompt.trim() === '') {
+      errors.push('Prompt is required')
+    }
+    
+    // At least one ID field required
+    if (!userId && !channelId) {
+      errors.push('Either User ID, Channel ID, or Combined ID is required')
+    }
+    
+    return errors
   }
 
   const handleSave = async () => {
-    // Validate YAML first
-    const validation = validateYaml(configText)
-    if (!validation.valid) {
-      setValidationError(validation.error || 'Invalid YAML')
-      toast.error('YAML validation failed: ' + validation.error)
+    const errors = validateForm()
+    if (errors.length > 0) {
+      setValidationErrors(errors)
+      errors.forEach(err => toast.error(err))
       return
     }
-    setValidationError(null)
+    setValidationErrors([])
 
-    // Check if name changed
-    const config = validation.parsed
-    if (name !== originalName) {
-      config.name = name
-    }
+    const config = buildConfig()
+    const isNewTask = !originalName
 
     try {
       setSaving(true)
@@ -191,36 +281,29 @@ export default function TaskEditor({ token, taskName, onSave, onSaveWithName, on
         // Name changed - need to delete old and create new
         await axios.delete(`${API_BASE}/tasks/${originalName}`, authHeaders)
       }
-
-      const isNewTask = !originalName || (originalName !== name)
       
       if (originalName && originalName === name) {
-        // Update existing - wrap in { config: ... } for Pydantic model
+        // Update existing
         await axios.put(`${API_BASE}/tasks/${name}`, { config }, authHeaders)
         toast.success('Task saved!')
       } else {
-        // Create new - wrap in { name, config } for Pydantic model
+        // Create new
         await axios.post(`${API_BASE}/tasks`, { name, config }, authHeaders)
         toast.success('Task created!')
         onSaveWithName?.(name)
       }
       
-      // Reload single task in bot's scheduler (not full reload - avoids disruption)
-      // Skip for new tasks - they don't exist in scheduler yet
+      // Reload task in scheduler (skip for new tasks)
       if (!isNewTask) {
         try {
           await axios.post(`${API_BASE}/tasks/${name}/reload`, {}, authHeaders)
         } catch (reloadErr) {
           console.error('Failed to reload task:', reloadErr)
-          // Don't fail the save if reload fails
         }
       }
       
-      // Stay in editor after save
-      if (originalName && originalName === name) {
-        // Refresh the task data from server
-        fetchTask(name)
-      }
+      // Refresh the task data
+      fetchTask(name)
     } catch (err: any) {
       console.error('Failed to save task:', err)
       toast.error(err.response?.data?.detail || 'Failed to save task')
@@ -247,38 +330,61 @@ export default function TaskEditor({ token, taskName, onSave, onSaveWithName, on
   }
 
   const handleNameChange = (newName: string) => {
-    // Sanitize name - only allow alphanumeric and hyphens
     const sanitized = newName.toLowerCase().replace(/[^a-z0-9-]/g, '-')
     setName(sanitized)
+    updateYamlFromForm()
   }
 
+  const handleToolToggle = (tool: string) => {
+    setTools(prev => {
+      if (prev.includes(tool)) {
+        return prev.filter(t => t !== tool)
+      }
+      return [...prev, tool]
+    })
+    updateYamlFromForm()
+  }
+
+  // Show loading or empty state
   if (loading) {
     return <div className="p-8">Loading task...</div>
   }
 
+  const isNewTask = !originalName
+
   return (
-    <div ref={containerRef} className="p-4 flex flex-col h-full">
+    <div className="flex flex-col h-full bg-background rounded-lg">
       {/* Header */}
-      <div className="flex justify-between items-center mb-4">
-        <div className="flex items-center gap-4">
+      <div className="flex justify-between items-center p-4 border-b">
+        <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" onClick={onCancel}>
-            <ArrowLeft className="w-5 h-5" />
+            <X className="w-5 h-5" />
           </Button>
           <h2 className="text-xl font-semibold m-0">
-            {originalName ? `Edit: ${originalName}` : 'New Task'}
+            {isNewTask ? 'New Task' : `Edit: ${originalName}`}
           </h2>
         </div>
         <div className="flex gap-2">
-          {originalName && (
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={() => setShowYamlView(!showYamlView)}
+          >
+            {showYamlView ? 'Form View' : 'YAML View'}
+          </Button>
+          {!isNewTask && (
             <Button 
               variant="destructive"
+              size="sm"
               onClick={() => setShowDeleteModal(true)}
+              disabled={saving}
             >
-              <Trash2 className="w-4 h-4 mr-2" />
+              <Trash2 className="w-4 h-4 mr-1" />
               Delete
             </Button>
           )}
           <Button 
+            size="sm"
             onClick={handleSave}
             disabled={saving || !name}
           >
@@ -287,77 +393,276 @@ export default function TaskEditor({ token, taskName, onSave, onSaveWithName, on
         </div>
       </div>
 
-      {/* Name input */}
-      <div className="mb-4">
-        <label className="block mb-2 font-bold">
-          Task Name
-        </label>
-        <Input
-          type="text"
-          value={name}
-          onChange={(e) => handleNameChange(e.target.value)}
-          placeholder="task-name"
-          className="max-w-[400px]"
-        />
-        <p className="text-sm text-muted-foreground mt-1">
-          Only lowercase letters, numbers, and hyphens allowed
-        </p>
-      </div>
-
-      {/* YAML Editor */}
-      <div className="flex-1 flex flex-col min-h-0">
-        <label className="block mb-2 font-bold">
-          YAML Configuration
-          {validationError && (
-            <span className="text-red-400 font-normal ml-2">
-              - {validationError}
-            </span>
-          )}
-        </label>
-        {/* Editor and help side by side */}
-        <div className="flex-1 flex gap-4 min-h-0">
-          {/* Editor container - flexbox auto-resize */}
-          <div className="flex-1 flex flex-col min-h-0">
-            <textarea
-              value={configText}
-              onChange={(e) => {
-                setConfigText(e.target.value)
-                setValidationError(null)
-              }}
-              placeholder="name: my-task&#10;enabled: true&#10;cron: '0 * * * *'&#10;..."
-              className="flex-1 min-h-[200px] font-mono text-sm p-4 bg-background text-foreground border rounded-lg resize-none"
-              style={{
-                borderColor: validationError ? '#ff6b6b' : undefined
-              }}
-            />
+      {/* Validation errors */}
+      {validationErrors.length > 0 && (
+        <div className="mx-4 mt-4 p-3 bg-red-500/10 border border-red-500/50 rounded-lg">
+          <div className="flex items-center gap-2 text-red-400 mb-2">
+            <AlertCircle className="w-4 h-4" />
+            <span className="font-medium">Please fix the following errors:</span>
           </div>
-          {/* Help text - right side */}
-          <div className="w-[280px] p-4 bg-secondary rounded-lg text-sm flex-shrink-0 overflow-auto">
-            <strong>Task Fields:</strong>
-            <ul className="mt-2 pl-6">
-              <li><code>name</code> - Task identifier</li>
-              <li><code>enabled</code> - true/false to enable/disable</li>
-              <li><code>cron</code> - Cron schedule (e.g., "0 * * * *" = every hour)</li>
-              <li><code>user_id|channel_id</code> - Discord user or channel ID</li>
-              <li><code>model</code> - LLM model to use</li>
-              <li><code>prompt</code> - Task prompt</li>
-              <li><code>tools</code> - List of tools to enable</li>
-              <li><code>persona</code> - Persona name to use</li>
-            </ul>
-          </div>
+          <ul className="list-disc pl-5 text-sm text-red-300">
+            {validationErrors.map((err, i) => (
+              <li key={i}>{err}</li>
+            ))}
+          </ul>
         </div>
-      </div>
+      )}
 
-      {/* Delete Confirmation Modal */}
-      <Modal
-        isOpen={showDeleteModal}
-        onClose={() => setShowDeleteModal(false)}
-        onConfirm={handleDelete}
-        title="Delete Task"
-        message={`Are you sure you want to delete "${originalName}"? This action cannot be undone.`}
-        variant="danger"
-        confirmText="Delete"
-      />
+      {/* Content */}
+      <ScrollArea className="flex-1">
+        <div className="p-4 space-y-6">
+          {showYamlView ? (
+            /* YAML View */
+            <div className="space-y-4">
+              <Label>YAML Configuration</Label>
+              <textarea
+                value={configText}
+                onChange={(e) => setConfigText(e.target.value)}
+                className="w-full h-[500px] font-mono text-sm p-4 bg-muted rounded-lg resize-none"
+              />
+            </div>
+          ) : (
+            /* Structured Form Fields */
+            <div className="space-y-6">
+              {/* Name Field */}
+              <div className="space-y-2">
+                <Label htmlFor="name">Task Name *</Label>
+                <Input
+                  id="name"
+                  type="text"
+                  value={name}
+                  onChange={(e) => handleNameChange(e.target.value)}
+                  placeholder="my-task-name"
+                />
+                <p className="text-sm text-muted-foreground">
+                  Only lowercase letters, numbers, and hyphens allowed
+                </p>
+              </div>
+
+              {/* Cron Field */}
+              <div className="space-y-2">
+                <Label htmlFor="cron">Cron Schedule *</Label>
+                <Input
+                  id="cron"
+                  type="text"
+                  value={cron}
+                  onChange={(e) => {
+                    setCron(e.target.value)
+                    updateYamlFromForm()
+                  }}
+                  placeholder="0 * * * *"
+                />
+                <p className="text-sm text-muted-foreground">
+                  Format: minute hour day month weekday (e.g., "0 * * * *" = every hour)
+                </p>
+                {!CRON_REGEX.test(cron) && cron && (
+                  <p className="text-sm text-red-400">Invalid cron expression</p>
+                )}
+              </div>
+
+              {/* Enabled Field */}
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="enabled"
+                  checked={enabled}
+                  onCheckedChange={(checked) => {
+                    setEnabled(checked === true)
+                    updateYamlFromForm()
+                  }}
+                />
+                <Label htmlFor="enabled" className="cursor-pointer">
+                  Enabled
+                </Label>
+              </div>
+
+              {/* ID Fields */}
+              <div className="space-y-4">
+                <Label>Discord ID *</Label>
+                <div className="flex items-center gap-2 mb-2">
+                  <Checkbox
+                    id="useCombinedId"
+                    checked={useCombinedId}
+                    onCheckedChange={(checked) => {
+                      setUseCombinedId(checked === true)
+                      updateYamlFromForm()
+                    }}
+                  />
+                  <Label htmlFor="useCombinedId" className="cursor-pointer text-sm">
+                    Use combined user_id|channel_id field
+                  </Label>
+                </div>
+                
+                {useCombinedId ? (
+                  <div className="space-y-2">
+                    <Input
+                      type="text"
+                      value={userId}
+                      onChange={(e) => {
+                        setUserId(e.target.value)
+                        updateYamlFromForm()
+                      }}
+                      placeholder="1234567890"
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      Discord user or channel ID (will be used for both)
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="userId">User ID</Label>
+                      <Input
+                        id="userId"
+                        type="text"
+                        value={userId}
+                        onChange={(e) => {
+                          setUserId(e.target.value)
+                          updateYamlFromForm()
+                        }}
+                        placeholder="1234567890"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="channelId">Channel ID</Label>
+                      <Input
+                        id="channelId"
+                        type="text"
+                        value={channelId}
+                        onChange={(e) => {
+                          setChannelId(e.target.value)
+                          updateYamlFromForm()
+                        }}
+                        placeholder="1234567890"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Model Field */}
+              <div className="space-y-2">
+                <Label htmlFor="model">Model</Label>
+                <Select
+                  value={model}
+                  onValueChange={(value) => {
+                    setModel(value)
+                    updateYamlFromForm()
+                  }}
+                >
+                  <SelectTrigger id="model">
+                    <SelectValue placeholder="Select model" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {AVAILABLE_MODELS.map((m) => (
+                      <SelectItem key={m} value={m}>
+                        {m}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="__custom__">Custom...</SelectItem>
+                  </SelectContent>
+                </Select>
+                {model === '__custom__' && (
+                  <Input
+                    type="text"
+                    value={model}
+                    onChange={(e) => {
+                      setModel(e.target.value)
+                      updateYamlFromForm()
+                    }}
+                    placeholder="provider/model-name"
+                    className="mt-2"
+                  />
+                )}
+              </div>
+
+              {/* Persona Field */}
+              <div className="space-y-2">
+                <Label htmlFor="persona">Persona</Label>
+                <Select
+                  value={persona}
+                  onValueChange={(value) => {
+                    setPersona(value === '__none__' ? '' : value)
+                    updateYamlFromForm()
+                  }}
+                >
+                  <SelectTrigger id="persona">
+                    <SelectValue placeholder="Select persona (optional)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">None</SelectItem>
+                    {availablePersonas.map((p) => (
+                      <SelectItem key={p} value={p}>
+                        {p}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Tools Field */}
+              <div className="space-y-2">
+                <Label>Tools</Label>
+                <div className="grid grid-cols-2 gap-2 p-3 border rounded-lg max-h-[200px] overflow-auto">
+                  {availableTools.length > 0 ? (
+                    availableTools.map((tool) => (
+                      <div key={tool} className="flex items-center gap-2">
+                        <Checkbox
+                          id={`tool-${tool}`}
+                          checked={tools.includes(tool)}
+                          onCheckedChange={() => handleToolToggle(tool)}
+                        />
+                        <Label htmlFor={`tool-${tool}`} className="cursor-pointer text-sm">
+                          {tool}
+                        </Label>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm text-muted-foreground col-span-2">
+                      No tools available
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Prompt Field */}
+              <div className="space-y-2">
+                <Label htmlFor="prompt">Prompt *</Label>
+                <textarea
+                  id="prompt"
+                  value={prompt}
+                  onChange={(e) => {
+                    setPrompt(e.target.value)
+                    updateYamlFromForm()
+                  }}
+                  placeholder="Your task prompt here..."
+                  rows={6}
+                  className="w-full p-3 border rounded-lg bg-background text-foreground resize-none"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      </ScrollArea>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={showDeleteModal} onOpenChange={setShowDeleteModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Task</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete "{originalName}"? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeleteModal(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={saving}>
+              {saving ? 'Deleting...' : 'Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

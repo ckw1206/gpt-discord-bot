@@ -1,13 +1,14 @@
 import asyncio
 from base64 import b64encode
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 import logging
 from typing import Any, Literal, Optional
 import os
 import re
 import sys
+import warnings
 
 import discord
 from discord.app_commands import Choice
@@ -36,7 +37,233 @@ if os.environ.get("DEBUG"):
     logging.basicConfig(level=logging.DEBUG)
     logging.getLogger("httpx").setLevel(logging.DEBUG)
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
+# Suppress noisy third-party DEBUG logs before any logging is configured
+# This prevents SQLAlchemy/asyncio from flooding logs with connection debug messages
+for noisy_logger in ["sqlalchemy.engine", "sqlalchemy.pool", "asyncio"]:
+    logging.getLogger(noisy_logger).setLevel(logging.WARNING)
+
+# Suppress Python warnings, particularly DeprecationWarning from third-party libraries
+# This keeps the log output clean and focused on actual application warnings
+warnings.filterwarnings("default", category=DeprecationWarning, module="gpt-discord-bot")
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
+
+
+# =============================================================================
+# Timezone Detection (for local time in logs)
+# =============================================================================
+
+def get_local_timezone_offset() -> str:
+    """
+    Get the local timezone offset as an ISO 8601 string (e.g., +08:00, -05:00).
+    This detects the timezone where the app is running.
+    """
+    # Get local timezone offset from system
+    now = datetime.now()
+    # Calculate offset from UTC
+    utc_offset = now.astimezone().utcoffset()
+    if utc_offset is None:
+        return "Z"
+    
+    # Convert to hours and minutes
+    total_seconds = int(utc_offset.total_seconds())
+    hours, remainder = divmod(abs(total_seconds), 3600)
+    minutes = remainder // 60
+    
+    # Format as +HH:MM or -HH:MM
+    sign = "+" if total_seconds >= 0 else "-"
+    return f"{sign}{hours:02d}:{minutes:02d}"
+
+
+# Cached timezone offset to avoid repeated system calls
+_cached_timezone_offset: str | None = None
+
+
+def get_cached_timezone_offset() -> str:
+    """Get cached timezone offset for consistent timestamps."""
+    global _cached_timezone_offset
+    if _cached_timezone_offset is None:
+        _cached_timezone_offset = get_local_timezone_offset()
+    return _cached_timezone_offset
+
+
+# =============================================================================
+# Structured Logging Setup (following logging-guide skill)
+# =============================================================================
+
+import json
+
+
+# Domain-specific logger names (per logging-guide skill)
+class DomainLoggers:
+    """Constants for domain-specific loggers."""
+    DISCORD = "discord"
+    API = "api"
+    AUTH = "auth"
+    LLM = "llm"
+    VOICE = "voice"
+    PROCESS = "process"
+    DB = "db"
+
+
+# Convenience function to get domain loggers
+def get_logger(name: str) -> logging.Logger:
+    """Get a logger with the given name, prefixed with the service."""
+    return logging.getLogger(f"discord-bot.{name}")
+
+
+class StructuredFormatter(logging.Formatter):
+    """
+    Custom formatter that outputs structured JSON logs in production
+    and human-readable format in development.
+    
+    Required fields (per logging-guide skill):
+    - timestamp: ISO 8601 format with Z suffix
+    - level: log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    - message: log content
+    - service: service identifier
+    - environment: deployment environment
+    
+    Recommended fields:
+    - trace_id, span_id, user_id, request_id
+    - For errors: error_type, error_message, stack
+    """
+    
+    def __init__(self, service: str = "discord-bot", environment: str = "development"):
+        super().__init__()
+        self.service = service
+        self.environment = environment
+    
+    def format(self, record: logging.LogRecord) -> str:
+        """Format log record as JSON or readable text based on environment."""
+        # Build base log data with required fields
+        # Use timezone-aware UTC datetime for consistent timestamps
+        log_data = {
+            "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + get_cached_timezone_offset(),
+            "level": record.levelname,
+            "message": record.getMessage(),
+            "service": self.service,
+            "environment": self.environment,
+        }
+        
+        # Add recommended fields from record extra if available
+        for field_name in ("trace_id", "span_id", "user_id", "request_id"):
+            if hasattr(record, field_name) and getattr(record, field_name):
+                log_data[field_name] = getattr(record, field_name)
+        
+        # Add error context for ERROR and CRITICAL levels
+        if record.levelno >= logging.ERROR:
+            if record.exc_info:
+                log_data.update({
+                    "error_type": record.exc_info[0].__name__ if record.exc_info[0] else "Exception",
+                    "error_message": str(record.exc_info[1]) if record.exc_info[1] else "",
+                    "stack": self.formatException(record.exc_info),
+                })
+            elif hasattr(record, "error_type"):
+                log_data.update({
+                    "error_type": getattr(record, "error_type", "Error"),
+                    "error_message": getattr(record, "error_message", ""),
+                    "stack": getattr(record, "stack", ""),
+                })
+        
+        # Add source info
+        log_data["source"] = {
+            "module": record.module,
+            "function": record.funcName,
+            "line": record.lineno,
+        }
+        
+        # Output format based on environment
+        if self.environment == "production":
+            return json.dumps(log_data)
+        else:
+            # Human-readable format for development
+            timestamp = log_data["timestamp"]
+            level = log_data["level"]
+            service = log_data["service"]
+            message = log_data["message"]
+            
+            readable = f"{timestamp} [{level}] {service} | {message}"
+            
+            # Add extra fields if present
+            extras = []
+            for field_name in ("trace_id", "user_id", "request_id"):
+                if field_name in log_data:
+                    extras.append(f"{field_name}={log_data[field_name]}")
+            if extras:
+                readable += f" | {' '.join(extras)}"
+            
+            if "error_type" in log_data:
+                readable += f" | error={log_data['error_type']}: {log_data.get('error_message', '')}"
+            
+            return readable
+
+
+def get_log_level() -> int:
+    """
+    Get the log level with the following precedence:
+    1. LOG_LEVEL environment variable (highest priority)
+    2. behavior.log_level in config.yaml
+    3. Environment-based default (DEBUG in dev, INFO in prod)
+    """
+    # 1. Check LOG_LEVEL env var first (for docker/k8s deployments)
+    env_level = os.environ.get("LOG_LEVEL")
+    if env_level:
+        try:
+            return getattr(logging, env_level.upper(), logging.DEBUG)
+        except AttributeError:
+            pass  # Fall through to next option
+    
+    # 2. Check config.yaml behavior.log_level
+    try:
+        config = get_config()
+        config_level = config.get("behavior", {}).get("log_level")
+        if config_level:
+            return getattr(logging, config_level.upper(), logging.DEBUG)
+    except Exception:
+        pass  # Fall through to fallback
+    
+    # 3. Fallback to environment-based default
+    environment = os.environ.get("ENVIRONMENT", "development")
+    return logging.DEBUG if environment == "development" else logging.INFO
+
+
+def setup_structured_logging():
+    """Initialize structured logging based on environment."""
+    # Get configuration from environment
+    service = os.environ.get("LOG_SERVICE", "discord-bot")
+    environment = os.environ.get("ENVIRONMENT", "development")
+    
+    # Get configurable log level (env var > config > environment-based default)
+    level = get_log_level()
+    
+    # Create formatter
+    formatter = StructuredFormatter(service=service, environment=environment)
+    
+    # Configure root logger
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+    
+    logging.basicConfig(level=level, handlers=[handler])
+    
+    # Suppress noisy third-party DEBUG logs (SQLAlchemy, asyncio, discord.py)
+    # These log connection operations that flood the logs
+    for noisy_logger in [
+        "sqlalchemy.engine", "sqlalchemy.pool", "asyncio",
+        "discord", "discord.gateway", "discord.http"
+    ]:
+        logging.getLogger(noisy_logger).setLevel(logging.WARNING)
+    
+    return logging.getLogger()
+
+
+# Initialize structured logging
+service = os.environ.get("LOG_SERVICE", "discord-bot")
+environment = os.environ.get("ENVIRONMENT", "development")
+logger = setup_structured_logging()
+# Use "process" domain logger for main process logs
+process_logger = get_logger(DomainLoggers.PROCESS)
+process_logger.info("Structured logging initialized", extra={"service": service, "environment": environment})
 
 VISION_MODEL_TAGS = ("claude", "gemini", "gemma", "gpt-4", "gpt-5", "grok-4", "llama", "llava", "mistral", "o3", "o4", "vision", "vl")
 PROVIDERS_SUPPORTING_USERNAMES = ("openai", "x-ai")
@@ -548,7 +775,8 @@ async def on_message(new_msg: discord.Message) -> None:
 
     is_dm = new_msg.channel.type == discord.ChannelType.private
     if (not is_dm and discord_bot.user not in new_msg.mentions) or new_msg.author.bot:
-        logging.debug(f"MSG_SKIP: msg_id={new_msg.id} is_dm={is_dm} mentioned={discord_bot.user in new_msg.mentions} is_bot={new_msg.author.bot}")
+        # MSG_SKIP is high-volume - log as INFO for visibility but avoid DEBUG flood
+        logging.info(f"MSG_SKIP: msg_id={new_msg.id} is_dm={is_dm} mentioned={discord_bot.user in new_msg.mentions} is_bot={new_msg.author.bot}")
         return
 
     role_ids = set(role.id for role in getattr(new_msg.author, "roles", ()))
@@ -1327,24 +1555,27 @@ def setup_scheduled_tasks() -> None:
 
 
 async def main() -> None:
+    # Initialize database first (before log handler tries to use it)
+    from bot.db.connection import init_db
+    await init_db()
+    
     # Initialize logging with database handler (for web portal logs)
     init_logging()
     
-    # Start web server in background task if portal is enabled
+    # Start web server in background thread if portal is enabled
     portal_config = config.get("portal", {})
-    web_server_task = None
+    web_server_thread = None
     if portal_config.get("enabled", False):
-        web_server_task = asyncio.create_task(
-            asyncio.to_thread(run_web_server)
-        )
+        import threading
+        web_server_thread = threading.Thread(target=run_web_server, daemon=True)
+        web_server_thread.start()
     
     # Start the Discord bot
     try:
         await discord_bot.start(config["bot_token"])
     finally:
-        # Cancel web server task on bot shutdown
-        if web_server_task and not web_server_task.done():
-            web_server_task.cancel()
+        # Web server will be stopped when process exits
+        pass
 
 
 if __name__ == "__main__":

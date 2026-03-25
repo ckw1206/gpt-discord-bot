@@ -16,7 +16,7 @@ from bot.db.connection import get_db_dependency
 from bot.db.models import User
 from bot.web.config import get_portal_config
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("discord-bot.auth")
 
 # Security
 SECRET_KEY = "llmcord-portal-secret-key"  # TODO: Move to config/env
@@ -90,6 +90,7 @@ def decode_token(token: str) -> dict | None:
 # Auth dependency
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db_dependency),
 ) -> CurrentUser:
     """Get current authenticated user from JWT token."""
     token = credentials.credentials
@@ -104,11 +105,23 @@ async def get_current_user(
     
     username: str = payload.get("sub")
     user_id: int = payload.get("user_id")
+    token_version: int = payload.get("token_version", 0)
     
     if username is None or user_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token payload",
+        )
+    
+    # Verify token version matches the user's current token_version
+    # This invalidates all tokens when database is reset
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None or user.token_version != token_version:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been invalidated",
+            headers={"WWW-Authenticate": "Bearer"},
         )
     
     return CurrentUser(id=user_id, username=username)
@@ -176,9 +189,9 @@ async def setup_portal(
     
     logger.info(f"Created initial user: {user.username}")
     
-    # Create token
+    # Create token with token_version
     access_token = create_access_token(
-        data={"sub": user.username, "user_id": user.id}
+        data={"sub": user.username, "user_id": user.id, "token_version": user.token_version}
     )
     
     return Token(
@@ -212,9 +225,9 @@ async def login(
             detail="Invalid username or password",
         )
     
-    # Create token
+    # Create token with token_version
     access_token = create_access_token(
-        data={"sub": user.username, "user_id": user.id}
+        data={"sub": user.username, "user_id": user.id, "token_version": user.token_version}
     )
     
     logger.info(f"User logged in: {user.username}")

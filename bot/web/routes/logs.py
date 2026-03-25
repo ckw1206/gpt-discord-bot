@@ -1,7 +1,7 @@
 """Logs API endpoints."""
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -13,6 +13,16 @@ from bot.db.models import EventLog
 from bot.db.connection import get_db_dependency
 from bot.web.auth import get_current_user
 from bot.web.config import get_portal_config
+
+
+def _format_timestamp(dt: Optional[datetime]) -> str:
+    """Format datetime as ISO 8601 with local timezone offset."""
+    if dt is None:
+        return ""
+    # If datetime is naive (no timezone), assume it's local time
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc).astimezone()
+    return dt.isoformat()
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +36,12 @@ class LogEntry(BaseModel):
     timestamp: str
     level: str
     event_type: str
+    logger: Optional[str] = None  # Alias for event_type (LogViewer compatibility)
     message: str
     metadata: Optional[dict] = None
+    # Additional structured fields from extra_data (per logging-guide skill)
+    service: Optional[str] = None
+    environment: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -66,6 +80,9 @@ async def get_logs(
     db: AsyncSession = Depends(get_db_dependency),
     level: Optional[str] = Query(None, description="Filter by log level"),
     event_type: Optional[str] = Query(None, description="Filter by event type"),
+    logger: Optional[str] = Query(None, description="Filter by logger (alias for event_type)"),
+    service: Optional[str] = Query(None, description="Filter by service name"),
+    environment: Optional[str] = Query(None, description="Filter by environment"),
     since: Optional[str] = Query(None, description="ISO timestamp to filter logs since"),
     until: Optional[str] = Query(None, description="ISO timestamp to filter logs until"),
     page: int = Query(1, ge=1, description="Page number"),
@@ -91,15 +108,26 @@ async def get_logs(
     # Level filter - only allow levels configured in portal
     if level:
         level_upper = level.upper()
+        # If the requested level is in allowed_levels, filter by that level
+        # If not in allowed_levels, return NO results (user requested disabled level)
         if level_upper in allowed_levels:
             filters.append(EventLog.level == level_upper)
+        else:
+            # Level not in allowed config - return no results
+            filters.append(EventLog.level == "__NO_MATCH__")
     else:
         # If no level specified, show only allowed levels
         filters.append(EventLog.level.in_(allowed_levels))
     
-    # Event type filter
-    if event_type:
-        filters.append(EventLog.event_type == event_type)
+    # Event type filter (also handle 'logger' alias)
+    if event_type or logger:
+        filter_value = event_type or logger
+        filters.append(EventLog.event_type == filter_value)
+    
+    # Note: Service/environment filtering is done in Python after fetch
+    # (to support both SQLite and PostgreSQL)
+    filter_service = service
+    filter_environment = environment
     
     # Time range filters
     if since:
@@ -144,18 +172,36 @@ async def get_logs(
     result = await db.execute(query)
     logs = result.scalars().all()
     
-    # Convert to response format
-    log_entries = [
-        LogEntry(
+    # Convert to response format (extract structured fields from extra_data)
+    log_entries = []
+    for log in logs:
+        # Extract service and environment from extra_data JSON
+        extra = log.extra_data or {}
+        log_service = extra.get("service")
+        log_environment = extra.get("environment")
+        
+        # Apply service/environment filters (Python-side for DB compatibility)
+        if filter_service and log_service != filter_service:
+            continue
+        if filter_environment and log_environment != filter_environment:
+            continue
+        
+        # Filter out service/environment from metadata display (they're top-level now)
+        metadata = {k: v for k, v in extra.items() if k not in ("service", "environment")}
+        if not metadata:
+            metadata = None
+        
+        log_entries.append(LogEntry(
             id=log.id,
-            timestamp=log.timestamp.isoformat() if log.timestamp else "",
+            timestamp=_format_timestamp(log.timestamp),
             level=log.level,
             event_type=log.event_type,
+            logger=log.event_type,  # Alias for LogViewer compatibility
             message=log.message,
-            metadata=log.extra_data,
-        )
-        for log in logs
-    ]
+            metadata=metadata,
+            service=log_service,
+            environment=log_environment,
+        ))
     
     return LogsResponse(
         logs=log_entries,

@@ -16,7 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot.db.connection import close_db, init_db, get_db_dependency
 from bot.web.config import get_portal_config
 
-logger = logging.getLogger(__name__)
+# Use "api" domain logger for HTTP request/response logging
+logger = logging.getLogger("discord-bot.api")
 
 
 @asynccontextmanager
@@ -178,11 +179,108 @@ app.add_middleware(
 def run_web_server() -> None:
     """Run the web server (blocking)."""
     import uvicorn
+    import logging
+    import os
+    from datetime import datetime, timezone, timedelta
+    import json
+    import warnings
+
+    # Suppress Python warnings in the web server
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
+    warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
+
+    # Get local timezone offset (cached for performance)
+    _cached_tz_offset: str | None = None
+
+    def get_local_timezone_offset() -> str:
+        """Get local timezone offset as ISO 8601 string (e.g., +08:00)."""
+        nonlocal _cached_tz_offset
+        if _cached_tz_offset is None:
+            now = datetime.now()
+            utc_offset = now.astimezone().utcoffset()
+            if utc_offset is None:
+                _cached_tz_offset = "Z"
+            else:
+                total_seconds = int(utc_offset.total_seconds())
+                hours, remainder = divmod(abs(total_seconds), 3600)
+                minutes = remainder // 60
+                sign = "+" if total_seconds >= 0 else "-"
+                _cached_tz_offset = f"{sign}{hours:02d}:{minutes:02d}"
+        return _cached_tz_offset
 
     config = get_portal_config()
     if not config.enabled:
         logger.info("Portal disabled, skipping web server start")
         return
+
+    # Get environment for log formatting
+    environment = os.environ.get("ENVIRONMENT", "development")
+    service = os.environ.get("LOG_SERVICE", "gpt-discord-bot-portal")
+
+    # Create StructuredFormatter for Uvicorn logs
+    class UvicornStructuredFormatter(logging.Formatter):
+        """Structured formatter for Uvicorn logs matching our app format."""
+
+        def __init__(self, service: str, environment: str):
+            super().__init__()
+            self.service = service
+            self.environment = environment
+
+        def format(self, record: logging.LogRecord) -> str:
+            # Use timezone-aware UTC datetime for consistent timestamps
+            log_data = {
+                "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + get_local_timezone_offset(),
+                "level": record.levelname,
+                "message": record.getMessage(),
+                "service": self.service,
+                "environment": self.environment,
+                "source": {
+                    "module": record.module,
+                    "function": record.funcName,
+                    "line": record.lineno,
+                },
+            }
+
+            # Add error context for ERROR and CRITICAL
+            if record.levelno >= logging.ERROR and record.exc_info:
+                log_data.update({
+                    "error_type": record.exc_info[0].__name__ if record.exc_info[0] else "Exception",
+                    "error_message": str(record.exc_info[1]) if record.exc_info[1] else "",
+                    "stack": self.formatException(record.exc_info),
+                })
+
+            if self.environment == "production":
+                return json.dumps(log_data)
+            else:
+                # Human-readable format
+                return f"{log_data['timestamp']} [{log_data['level']}] {self.service} | {record.getMessage()}"
+
+    # Configure Uvicorn loggers to use structured formatting
+    formatter = UvicornStructuredFormatter(service=service, environment=environment)
+
+    # Override uvicorn default logger
+    uvicorn_default = logging.getLogger("uvicorn.default")
+    uvicorn_default.handlers.clear()
+    uvicorn_default.setLevel(logging.INFO)
+    uvicorn_default.addHandler(logging.StreamHandler())
+    for handler in uvicorn_default.handlers:
+        handler.setFormatter(formatter)
+
+    # Override uvicorn access logger
+    uvicorn_access = logging.getLogger("uvicorn.access")
+    uvicorn_access.handlers.clear()
+    uvicorn_access.setLevel(logging.INFO)
+    uvicorn_access.addHandler(logging.StreamHandler())
+    for handler in uvicorn_access.handlers:
+        handler.setFormatter(formatter)
+
+    # Override uvicorn ASGI logger
+    uvicorn_asgi = logging.getLogger("uvicorn.asgi")
+    uvicorn_asgi.handlers.clear()
+    uvicorn_asgi.setLevel(logging.INFO)
+    uvicorn_asgi.addHandler(logging.StreamHandler())
+    for handler in uvicorn_asgi.handlers:
+        handler.setFormatter(formatter)
 
     logger.info(f"Starting web server on port {config.port}")
     uvicorn.run(
@@ -226,6 +324,10 @@ import time
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     """Log all HTTP requests with timing information."""
+    # Skip logging for /api/logs and /ws/logs endpoints to prevent feedback loop in LogViewer
+    if request.url.path.startswith("/api/logs") or request.url.path.startswith("/ws/logs"):
+        return await call_next(request)
+    
     start_time = time.time()
     
     # Process request
@@ -276,6 +378,17 @@ async def api_login(request: LoginRequest, db: AsyncSession = Depends(get_db_dep
     return await login(request, db)
 
 
+@app.get("/api/auth/me", tags=["Auth"])
+async def api_me(current_user: CurrentUser = Depends(get_current_user)):
+    """
+    Verify the current token and get user info.
+    
+    Use this to verify a token is still valid after database refresh.
+    Returns user info if token is valid, 401 otherwise.
+    """
+    return {"id": current_user.id, "username": current_user.username}
+
+
 @app.get("/api/auth/users", response_model=list[dict], tags=["Auth"])
 async def api_get_users(
     db: AsyncSession = Depends(get_db_dependency),
@@ -297,6 +410,7 @@ from bot.web.routes.config import router as config_router
 from bot.web.routes.personas import router as personas_router
 from bot.web.routes.tasks import router as tasks_router
 from bot.web.routes.skills import router as skills_router
+from bot.web.routes.tools import router as tools_router
 
 app.include_router(status_router, tags=["Status"])
 app.include_router(servers_router, tags=["Servers"])
@@ -305,6 +419,7 @@ app.include_router(config_router, tags=["Config"])
 app.include_router(personas_router, tags=["Personas"])
 app.include_router(tasks_router, tags=["Tasks"])
 app.include_router(skills_router, tags=["Skills"])
+app.include_router(tools_router, tags=["Tools"])
 
 
 # WebSocket endpoint for real-time logs

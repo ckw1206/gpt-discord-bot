@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../App'
 import axios from 'axios'
 import { RefreshCw } from 'lucide-react'
@@ -58,10 +58,10 @@ export default function Dashboard({ }: DashboardProps) {
   const [editingTask, setEditingTask] = useState<string | null | undefined>(null)
   // Key to force TaskList re-render (reset expanded state) when tab is clicked
   const [tasksKey, setTasksKey] = useState(0)
-
-  const authHeaders = {
-    headers: { Authorization: `Bearer ${token}` }
-  }
+  
+  // Use ref to always get current token value
+  const tokenRef = useRef(token)
+  tokenRef.current = token
 
   const handleTabChange = (tab: 'dashboard' | 'config' | 'servers' | 'personas' | 'tasks' | 'skills') => {
     // Reset to default view when clicking a tab, even if already on that tab
@@ -79,16 +79,26 @@ export default function Dashboard({ }: DashboardProps) {
   }
 
   useEffect(() => {
-    fetchStatus()
-  }, [])
+    if (token) {
+      fetchStatus()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token])
 
   const fetchStatus = async () => {
+    const currentToken = tokenRef.current
+    if (!currentToken) {
+      setLoading(false)
+      return
+    }
     try {
-      const res = await axios.get(`${API_BASE}/status`, authHeaders)
+      const res = await axios.get(`${API_BASE}/status`, {
+        headers: { Authorization: `Bearer ${currentToken}` }
+      })
       setStatus(res.data)
-    } catch (err) {
-      console.error('Failed to fetch status:', err)
-    } finally {
+      setLoading(false)
+    } catch (err: any) {
+      console.error('[Dashboard] Failed to fetch status:', err.response?.status, err.response?.data)
       setLoading(false)
     }
   }
@@ -199,8 +209,19 @@ export default function Dashboard({ }: DashboardProps) {
         )}
 
         {activeTab === 'tasks' && token && (
-          editingTask !== undefined && editingTask !== null ? (
-            <div className="flex-1 min-h-0 overflow-hidden">
+          <div className="flex-1 min-h-0 overflow-hidden flex flex-col md:flex-row gap-4">
+            {/* Left panel: TaskList - 50% on desktop, 40% on tablet, full on mobile */}
+            <div className="w-full md:w-1/2 lg:w-[40%] min-h-[300px] md:min-h-0 overflow-hidden flex flex-col">
+              <TaskList 
+                key={tasksKey}
+                token={token} 
+                selectedTask={editingTask !== undefined && editingTask !== null ? editingTask : null}
+                onRequestEdit={(name) => setEditingTask(name)}
+                onRequestCreate={() => setEditingTask('')}
+              />
+            </div>
+            {/* Right panel: TaskEditor - 50% on desktop, 60% on tablet, full on mobile */}
+            <div className="w-full md:w-1/2 lg:w-[60%] min-h-[400px] md:min-h-0 overflow-hidden flex flex-col">
               <TaskEditor
                 token={token}
                 taskName={editingTask === '' ? undefined : editingTask}
@@ -209,16 +230,7 @@ export default function Dashboard({ }: DashboardProps) {
                 onCancel={() => setEditingTask(undefined)}
               />
             </div>
-          ) : (
-            <div className="flex-1 min-h-0 overflow-auto">
-              <TaskList 
-                key={tasksKey}
-                token={token} 
-                onRequestEdit={(name) => setEditingTask(name)}
-                onRequestCreate={() => setEditingTask('')}
-              />
-            </div>
-          )
+          </div>
         )}
 
         {activeTab === 'skills' && token && (

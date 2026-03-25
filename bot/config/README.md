@@ -154,3 +154,43 @@ fallback_models:
 - **Test cron expressions** – Use [crontab.guru](https://crontab.guru) to verify
 - **Set fallback models** – Ensures tasks complete even if primary model fails
 - **Use web_search for current data** – Perfect for market updates, news summaries, etc.
+
+---
+
+## Environment Variables for Structured Logging
+
+The structured logging system uses the following environment variables (per the logging-guide skill):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOG_SERVICE` | `discord-bot` | Service identifier in log output |
+| `ENVIRONMENT` | `development` | Environment name (`development` or `production`) |
+| `LOG_SAMPLING_RATE` | `1.0` | Sampling rate for production logs (0.0-1.0) |
+
+### Environment-Specific Behavior
+
+- **Development**: Logs are in human-readable format, DEBUG level enabled
+- **Production**: Logs are in JSON format for log aggregation, DEBUG level disabled
+
+### Setting Environment Variables
+
+**In `.env` file:**
+```bash
+LOG_SERVICE=discord-bot
+ENVIRONMENT=production
+LOG_SAMPLING_RATE=0.5
+```
+
+**In Docker:**
+```yaml
+environment:
+  - ENVIRONMENT=production
+  - LOG_SAMPLING_RATE=0.5
+```
+
+### Log Fields
+
+All log entries include:
+- **Required**: `timestamp` (ISO 8601), `level`, `message`, `service`, `environment`
+- **Recommended** (when available): `trace_id`, `span_id`, `user_id`, `request_id`
+- **Error context** (ERROR/CRITICAL): `error_type`, `error_message`, `stack`

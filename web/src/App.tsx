@@ -1,6 +1,7 @@
 import { useState, useEffect, createContext, useContext } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useSearchParams } from 'react-router-dom'
 import { Toaster, toast } from 'react-hot-toast'
+import axios from 'axios'
 import Login from './components/Login'
 import Dashboard from './components/Dashboard'
 import ServerDrawer from './components/ServerDrawer'
@@ -52,7 +53,36 @@ function AppContent() {
 
 function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'))
+  const [tokenVerified, setTokenVerified] = useState(false)
 
+  // Verify token on mount
+  useEffect(() => {
+    const verifyToken = async () => {
+      const storedToken = localStorage.getItem('token')
+      if (!storedToken) {
+        setTokenVerified(true)
+        return
+      }
+
+      try {
+        await axios.get('/api/auth/me', {
+          headers: { Authorization: `Bearer ${storedToken}` }
+        })
+        // Token is valid, set token state
+        setToken(storedToken)
+        setTokenVerified(true)
+      } catch {
+        // Token is invalid, clear it
+        localStorage.removeItem('token')
+        setToken(null)
+        setTokenVerified(true)
+      }
+    }
+
+    verifyToken()
+  }, [])
+
+  // Save token to localStorage when it changes
   useEffect(() => {
     if (token) {
       localStorage.setItem('token', token)
@@ -60,6 +90,11 @@ function App() {
       localStorage.removeItem('token')
     }
   }, [token])
+
+  // Don't render until we've verified the token
+  if (!tokenVerified) {
+    return null
+  }
 
   return (
     <AuthContext.Provider value={{ token, setToken }}>

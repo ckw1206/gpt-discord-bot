@@ -110,7 +110,7 @@ def _discover_tools() -> dict[str, ToolEntry]:
                 discovered[tool_name] = tool_entry
                 logging.info(f"Discovered tool: {tool_name} from {filename}")
             else:
-                logging.debug(
+                logging.info(
                     f"Tool '{module_name}': missing TOOL_NAME or TOOL_ENTRY, skipping"
                 )
                 

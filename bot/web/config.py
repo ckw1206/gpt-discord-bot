@@ -1,5 +1,6 @@
 """Portal configuration loading for web server."""
 
+import os
 from typing import Any
 
 from bot.config.loader import get_config
@@ -40,7 +41,8 @@ class PortalConfig:
     @property
     def logs_levels(self) -> list[str]:
         """Log levels to capture."""
-        return self._config.get("logs", {}).get("levels", ["INFO", "WARNING", "ERROR"])
+        # Default includes CRITICAL since it's important for error tracking
+        return self._config.get("logs", {}).get("levels", ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
 
     @property
     def admin_ids(self) -> list[int]:
@@ -56,6 +58,22 @@ class PortalConfig:
     def docs_enabled(self) -> bool:
         """Whether API documentation is enabled."""
         return self._config.get("docs_enabled", False)
+
+    @property
+    def service_name(self) -> str:
+        """Service name for structured logging (from LOG_SERVICE env var or config)."""
+        # First check environment variable (takes precedence)
+        if "LOG_SERVICE" in os.environ:
+            return os.environ["LOG_SERVICE"]
+        return self._config.get("service_name", "discord-bot")
+
+    @property
+    def environment(self) -> str:
+        """Environment for structured logging (from ENVIRONMENT env var or config)."""
+        # First check environment variable (takes precedence)
+        if "ENVIRONMENT" in os.environ:
+            return os.environ["ENVIRONMENT"]
+        return self._config.get("environment", "development")
 
 
 # Global config instance
