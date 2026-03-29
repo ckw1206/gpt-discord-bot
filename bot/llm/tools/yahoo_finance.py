@@ -51,7 +51,7 @@ def _get_current_price(symbol: str) -> float | None:
         # Get the most recent price
         current = hist.iloc[-1]["Close"]
         if pd.notna(current) and current > 0:
-            logging.debug("yahoo_finance: %s current price (intraday) = %s", symbol, current)
+            logging.info("yahoo_finance: %s current price (intraday) = %s", symbol, current)
             return float(current)
     except Exception as e:
         logging.warning("yahoo_finance: failed to get intraday price for %s: %s", symbol, e)
@@ -77,7 +77,7 @@ def _get_previous_close(symbol: str) -> float | None:
             try:
                 prev_close_float = float(prev_close)
                 if prev_close_float > 0:
-                    logging.debug("yahoo_finance: %s previousClose from info = %s", symbol, prev_close_float)
+                    logging.info("yahoo_finance: %s previousClose from info = %s", symbol, prev_close_float)
                     return prev_close_float
             except (TypeError, ValueError):
                 pass
@@ -105,7 +105,7 @@ def _fetch_with_retry(symbol: str, days: int, max_attempts: int = 3) -> Any:
             hist = yf.Ticker(symbol).history(period=f"{days}d")
             
             # Log response shape for debugging (Phase 3)
-            logging.debug(
+            logging.info(
                 "yahoo_finance: fetched %s period=%dd -> shape=%s",
                 symbol, days, hist.shape if hasattr(hist, 'shape') else 'N/A'
             )
@@ -116,7 +116,7 @@ def _fetch_with_retry(symbol: str, days: int, max_attempts: int = 3) -> Any:
             # Empty data - retry with backoff
             if attempt < max_attempts - 1:
                 delay = 1 * (2 ** attempt)  # 1s, 2s exponential backoff
-                logging.debug(
+                logging.info(
                     "yahoo_finance: empty data for %s, retrying in %ds (attempt %d/%d)",
                     symbol, delay, attempt + 1, max_attempts
                 )

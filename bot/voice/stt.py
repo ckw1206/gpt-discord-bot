@@ -21,7 +21,7 @@ except ImportError:
 from .config import VoiceConfig
 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("discord-bot.voice")
 
 
 class AzureSTT:

@@ -41,14 +41,17 @@ def validate_config(cfg: dict[str, Any], config_path: str = "config.yaml") -> No
         errors.append(f"Config root must be a mapping, got {type(cfg).__name__}")
     
     # ── Check required top-level keys ───────────────────────────────────────
-    required_keys = ("providers", "models")
-    for key in required_keys:
-        if key not in cfg:
-            errors.append(f"Missing required top-level key: '{key}'")
+    # Support both new grouped structure (llm.providers, llm.models) and legacy flat keys
+    providers = cfg.get("providers") or cfg.get("llm", {}).get("providers")
+    models = cfg.get("models") or cfg.get("llm", {}).get("models")
+    
+    if not providers:
+        errors.append(f"Missing required key: 'providers' (or 'llm.providers')")
+    if not models:
+        errors.append(f"Missing required key: 'models' (or 'llm.models')")
     
     # ── Validate providers section ──────────────────────────────────────────
-    if "providers" in cfg:
-        providers = cfg["providers"]
+    if providers:
         if not isinstance(providers, dict):
             errors.append(f"'providers' must be a mapping, got {type(providers).__name__}")
         else:
@@ -62,8 +65,7 @@ def validate_config(cfg: dict[str, Any], config_path: str = "config.yaml") -> No
                     errors.append(f"Provider '{provider_name}' missing required 'base_url'")
     
     # ── Validate models section ────────────────────────────────────────────
-    if "models" in cfg:
-        models = cfg["models"]
+    if models:
         if not isinstance(models, dict):
             errors.append(f"'models' must be a mapping, got {type(models).__name__}")
         elif not models:
@@ -117,8 +119,9 @@ def validate_config(cfg: dict[str, Any], config_path: str = "config.yaml") -> No
                             )
     
     # ── Validate fallback_models ───────────────────────────────────────────
-    if "fallback_models" in cfg:
-        fallback = cfg["fallback_models"]
+    # Support both new grouped structure (llm.fallback_models) and legacy flat keys
+    fallback = cfg.get("fallback_models") or cfg.get("llm", {}).get("fallback_models")
+    if fallback:
         if not isinstance(fallback, list):
             errors.append(
                 f"'fallback_models' must be a list, got {type(fallback).__name__}. "
@@ -204,36 +207,38 @@ def validate_config(cfg: dict[str, Any], config_path: str = "config.yaml") -> No
                                         f"got {type(ids).__name__}"
                                     )
     
-    # ── Validate azure-speech section (optional) ────────────────────────────
-    if "azure-speech" in cfg:
-        azure_speech = cfg["azure-speech"]
-        if azure_speech is None:
-            warnings.append("'azure-speech' is set to null (voice features will be disabled)")
-        elif not isinstance(azure_speech, dict):
-            errors.append(
-                f"'azure-speech' must be a mapping, got {type(azure_speech).__name__}"
-            )
+    # ── Validate voice section (optional) ───────────────────────────────────
+    # Support both new 'voice' section and legacy 'azure-speech'
+    voice_cfg = cfg.get("voice") or cfg.get("azure-speech")
+    voice_key = "voice" if "voice" in cfg else "azure-speech"
+    
+    if voice_cfg is None:
+        pass  # Voice is optional
+    elif not isinstance(voice_cfg, dict):
+        errors.append(
+            f"'{voice_key}' must be a mapping, got {type(voice_cfg).__name__}"
+        )
+    else:
+        # Required fields
+        if not voice_cfg.get("key"):
+            warnings.append(f"'{voice_key}.key' is empty (TTS/STT features disabled)")
+        if not voice_cfg.get("region"):
+            errors.append(f"'{voice_key}.region' is required when {voice_key} is configured")
         else:
-            # Required fields
-            if not azure_speech.get("key"):
-                warnings.append("'azure-speech.key' is empty (TTS/STT features disabled)")
-            if not azure_speech.get("region"):
-                errors.append("'azure-speech.region' is required when azure-speech is configured")
-            
-            # Optional fields validation
-            if "default_voice" in azure_speech and azure_speech["default_voice"]:
-                if not isinstance(azure_speech["default_voice"], str):
+            # Optional fields validation (only if region is set)
+            if "default_voice" in voice_cfg and voice_cfg["default_voice"]:
+                if not isinstance(voice_cfg["default_voice"], str):
                     errors.append(
-                        f"'azure-speech.default_voice' must be a string, "
-                        f"got {type(azure_speech['default_voice']).__name__}"
+                        f"'{voice_key}.default_voice' must be a string, "
+                        f"got {type(voice_cfg['default_voice']).__name__}"
                     )
             
-            if "default_style" in azure_speech and azure_speech["default_style"]:
+            if "default_style" in voice_cfg and voice_cfg["default_style"]:
                 valid_styles = {"cheerful", "sad", "angry", "neutral", "excited", "friendly", "terrified", "shouting", "whispering", "hopeful"}
-                style = azure_speech["default_style"]
+                style = voice_cfg["default_style"]
                 if style not in valid_styles:
                     warnings.append(
-                        f"'azure-speech.default_style' has unknown value '{style}'. "
+                        f"'{voice_key}.default_style' has unknown value '{style}'. "
                         f"Valid styles: {', '.join(sorted(valid_styles))}"
                     )
     
@@ -243,6 +248,7 @@ def validate_config(cfg: dict[str, Any], config_path: str = "config.yaml") -> No
     
     # ── Log errors and exit if any ──────────────────────────────────────────
     if errors:
+        error_details = "; ".join(errors)
         logger.error("=" * 70)
         logger.error("CONFIG VALIDATION FAILED (%s)", config_path)
         logger.error("=" * 70)
@@ -251,4 +257,4 @@ def validate_config(cfg: dict[str, Any], config_path: str = "config.yaml") -> No
         logger.error("=" * 70)
         logger.error("Please fix the errors above and restart the bot.")
         logger.error("=" * 70)
-        raise ConfigValidationError(f"Config validation failed with {len(errors)} error(s)")
+        raise ConfigValidationError(f"Config validation failed: {error_details}")

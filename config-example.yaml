@@ -1,167 +1,187 @@
-# Discord settings:
-bot_token: 
-client_id: 
-status_message: 
-
-max_text: 100000
-max_images: 5
-max_messages: 25
-
-# Web search uses Brave API for all providers. Set BRAVE_API_KEY in .env for web_search tool.
-use_plain_responses: false
-show_embed_color: true  # Show green/orange bar on bot responses (set to false to disable)
-allow_dms: true
-
-permissions:
-  users:
-    admin_ids: []
-    allowed_ids: []
-    blocked_ids: []
-
-  roles:
-    allowed_ids: []
-    blocked_ids: []
-
-  channels:
-    allowed_ids: []
-    blocked_ids: []
-
-
-# LLM settings:
-
-providers:
-  # Remote providers:
-  azure-openai:
-    base_url: https://<resource name>.openai.azure.com/openai/deployments/<deployment name>
-    api_key: 
-    extra_query:
-      api-version: 2024-12-01-preview
-
-  google:
-    base_url: https://generativelanguage.googleapis.com/v1beta/openai
-    api_key: 
-
-  groq:
-    base_url: https://api.groq.com/openai/v1
-    api_key: 
-
-  mistral:
-    base_url: https://api.mistral.ai/v1
-    api_key: 
-
-  openai:
-    base_url: https://api.openai.com/v1
-    api_key: 
-
-  openrouter:
-    base_url: https://openrouter.ai/api/v1
-    api_key: 
-
-  x-ai:
-    base_url: https://api.x.ai/v1
-    api_key: 
-
-  # Local providers:
-  lmstudio:
-    base_url: http://localhost:1234/v1
-
-  ollama:
-    base_url: http://localhost:11434
-    # api_key is optional for local Ollama, but can be set if needed
-
-  vllm:
-    base_url: http://localhost:8000/v1
-
-  open-webui:
-    base_url: http://localhost:3000/api
-    api_key: 
-    enable_web_search: true  # Optional: Enable web search for Open WebUI (default is true for open-webui provider)
-    # IMPORTANT: This setting sends web_search=true to the Open WebUI API.
-    # For web search to actually work, you MUST:
-    # 1. Enable web search in Open WebUI Admin Settings > Web Search
-    # 2. Configure a search engine (SearXNG, Tavily, Brave, Google PSE, etc)
-    # 3. Set the required API keys for your chosen search engine
-    # If web search is enabled here but not in Open WebUI, the API parameter will be ignored
-
-models:
-  # Example: OpenRouter model using a named persona (see bot/config/personas/)
-  openrouter/openrouter/free:
-    persona: discord-bot           # maps to bot/config/personas/discord-bot.(md|txt|yaml|yml)
-    supports_tools: true
-    tools: ["web_search"]
-    think: true
-    # Optional: model-specific fallback models for interactive chat
-    # fallback_models:
-    #   - "openai/gpt-5"
-  
-  # Ollama model with tools support
-  # ollama/qwen3:14b:
-  #   tools: ["web_search", "visuals_core"]  # Optional: enable specific tools
-  #   persona: some_persona_name  # Optional: model-specific persona
-  #   think: true  # Optional: enable thinking mode (supported by reasoning models)
-
-fallback_models:  # Optional: global list of models to try if the primary model fails (in order).
-  # - "ollama/llama2"
-  # - "groq/mixtral"
-
-
-
-# Scheduled tasks (optional)
+﻿# =============================================================================
+# llmcord Configuration File
+# =============================================================================
+# This file shows the NEW grouped config structure. The old flat keys are
+# still supported for backward compatibility, but we recommend the new format.
 #
-# There are two ways to configure tasks:
-# 1) Inline under `scheduled_tasks` (simple / legacy style, shown below).
-# 2) Recommended: create separate YAML files under `bot/config/tasks/*.yaml`.
-#
-# When both are used, file-based tasks override inline ones with the same name.
+# New structure groups settings into sections:
+#   • discord    - Discord bot settings (token, client ID, status, permissions)
+#   • behavior   - Bot behavior settings (message limits, responses, DM settings)
+#   • llm        - LLM provider and model configuration
+#   • tools      - Tool configurations (web_search, google_tools, etc.)
+#   • voice      - Voice (TTS/STT) configuration
+#   • portal     - Web portal settings
+# =============================================================================
+
+# =============================================================================
+# Discord Settings
+# =============================================================================
+discord:
+  bot_token: 
+  client_id: 
+  status_message: 
+  permissions:
+    users:
+      admin_ids: []
+      allowed_ids: []
+      blocked_ids: []
+
+    roles:
+      allowed_ids: []
+      blocked_ids: []
+
+    channels:
+      allowed_ids: []
+      blocked_ids: []
+
+# =============================================================================
+# Bot Behavior Settings
+# =============================================================================
+behavior:
+  max_text: 100000
+  max_images: 5
+  max_messages: 25
+  use_plain_responses: false
+  show_embed_color: true
+  allow_dms: true
+  # Log level: TRACE, DEBUG, INFO, WARNING, ERROR, CRITICAL
+  # Optional: defaults to DEBUG in development, INFO in production
+  # Can be overridden by LOG_LEVEL environment variable
+  # log_level: INFO
+
+# =============================================================================
+# LLM Settings
+# =============================================================================
+llm:
+  providers:
+    # Remote providers:
+    azure-openai:
+      base_url: https://<resource name>.openai.azure.com/openai/deployments/<deployment name>
+      api_key: 
+      extra_query:
+        api-version: 2024-12-01-preview
+
+    google:
+      base_url: https://generativelanguage.googleapis.com/v1beta/openai
+      api_key: 
+
+    groq:
+      base_url: https://api.groq.com/openai/v1
+      api_key: 
+
+    mistral:
+      base_url: https://api.mistral.ai/v1
+      api_key: 
+
+    openai:
+      base_url: https://api.openai.com/v1
+      api_key: 
+
+    openrouter:
+      base_url: https://openrouter.ai/api/v1
+      api_key: 
+
+    x-ai:
+      base_url: https://api.x.ai/v1
+      api_key: 
+
+    # Local providers:
+    lmstudio:
+      base_url: http://localhost:1234/v1
+
+    ollama:
+      base_url: http://localhost:11434
+
+    vllm:
+      base_url: http://localhost:8000/v1
+
+    open-webui:
+      base_url: http://localhost:3000/api
+      api_key: 
+      enable_web_search: true
+
+  models:
+    openrouter/openrouter/free:
+      persona: discord-bot
+      supports_tools: true
+      tools: ["web_search"]
+      think: true
+
+    # ollama/qwen3:14b:
+    #   tools: ["web_search", "visuals_core"]
+    #   persona: some_persona_name
+    #   think: true
+
+  fallback_models:
+    # - "ollama/llama2"
+    # - "groq/mixtral"
+
+# =============================================================================
+# Scheduled Tasks
+# =============================================================================
+# Two ways to configure tasks:
+# 1) Inline under `scheduled_tasks` (legacy style)
+# 2) Recommended: create YAML files under `bot/config/tasks/*.yaml`
 
 scheduled_tasks:
-  # Cron schedule format: minute hour day month day_of_week
-  # Example: "0 9 * * *" = Every day at 9:00 AM
-  # Example: "0 9 * * 1-5" = Mon-Fri at 9:00 AM
-  # For DMs: use "user_id" instead of "channel_id"
-  # Optional: persona / system_prompt overrides the model's or global system prompt for this task.
-
-  # Task 1: Email check to channel (inline example)
+  # Cron: minute hour day month day_of_week
   email_check:
     enabled: false
-    cron: "0 9 * * *"  # Every day at 9:00 AM
-    channel_id: xxxxxxxx # Send to channel
+    cron: "0 9 * * *"
+    channel_id: xxxxxxxx
     model: "google/gemini-2.5-flash"
-    # Highest priority: task-level fallback models
-    fallback_models:  # Optional: Task-specific fallback models, then global fallback_models
+    fallback_models:
       - "openrouter/openrouter/free"
     prompt: "Summarize my recent emails"
-    # You can use either a named persona or an inline system_prompt:
-    # persona: email_reader
-    system_prompt: | # optional: task-specific instructions for this job
-      Reply in Traditional Chinese. Focus on major indices and notable movers only.
-  
-  # Task 2: Send DM to user (inline example)
+    system_prompt: |
+      Reply in Traditional Chinese. Focus on major indices only.
+
   DM_MSG:
     enabled: false
-    cron: "0 * * * *"  # Every hour
-    user_id: xxxxxx # Send DM to this user ID (don't use channel_id)
+    cron: "0 * * * *"
+    user_id: xxxxxx
     model: "google/gemini-2.5-flash"
-    fallback_models:  # Optional: Task-specific fallback models
+    fallback_models:
       - "openrouter/openrouter/free"
     prompt: "how are you? this is a test msg."
 
-
+# =============================================================================
+# Tools Configuration
+# =============================================================================
 tools:
-  # Google Tools (Gmail + Calendar) - requires credentials.json from Google Cloud Console
-  # Get credentials: https://console.cloud.google.com/apis/credentials
+  # Web search uses Brave API. Set BRAVE_API_KEY in .env
+
   google_tools:
     default_calendar_entries: 10
     default_email_entries: 10
-    path_to_credentials: "credentials.json"  # OAuth client secrets file
+    path_to_credentials: "credentials.json"
 
+# =============================================================================
+# Voice Configuration (TTS/STT)
+# =============================================================================
+voice:
+  # Azure Speech Services - get credentials at https://portal.azure.com
+  # key: ""
+  # region: "eastus"
+  # endpoint: ""
+  # default_voice: "en-US-JennyNeural"
+  # default_style: "cheerful"
 
-# Azure Speech Services (optional - for TTS and STT features)
-#
-# Get credentials: https://portal.azure.com -> Speech Services
-azure-speech:
-  key: ""  # Your Azure Speech key
-  region: "eastus"  # Your Azure region (e.g., eastus, westeurope, japaneast)
-  # endpoint: ""  # Optional: custom endpoint (only if using custom speech resource)
-  # default_voice: "en-US-JennyNeural"  # Optional: default voice for TTS; zh-TW-HsiaoChenNeural for Chinese(Taiwanese)
-  # default_style: "cheerful"  # Optional: default speaking style (cheerful, sad, angry, etc.)
+# =============================================================================
+# Web Portal Configuration
+# =============================================================================
+portal:
+  enabled: false
+  port: ${PORT:8080}
+  password: ${PORTAL_PASSWORD:}
+  logs:
+    retention_days: 7
+    # Log levels to capture in portal database: INFO, WARNING, ERROR
+    # NOTE: DEBUG causes massive I/O from SQLAlchemy - only enable temporarily!
+    levels: [INFO, WARNING, ERROR]
+  # require_discord_admin: true
+
+# =============================================================================
+# LEGACY FORMAT (Backward Compatible - Deprecated)
+# =============================================================================
+# Old flat keys still work but are deprecated. Migrate to grouped format above.

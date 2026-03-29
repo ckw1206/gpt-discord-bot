@@ -2,10 +2,30 @@ services:
   container:
     build: .
     container_name: gpt-discord-bot
-    network_mode: host
+    ports:
+      - "${PORT:-8080}:8080"
     restart: unless-stopped
     volumes:
       - ./:/app:rw
+      # Database stored on host (bind mount) - accessible at ./data/portal.db
+      - ./data:/app/data
     environment:
       - AZURE_SPEECH_KEY=${AZURE_SPEECH_KEY}
       - AZURE_SPEECH_REGION=${AZURE_SPEECH_REGION}
+      # Logging configuration
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - LOG_SAMPLING_RATE=${LOG_SAMPLING_RATE:-1.0}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # Timezone - pass through from host to ensure logs show local time
+      - TZ=${TZ:-Asia/Taipei}
+      # Portal configuration
+      - PORT=${PORT:-8080}
+    # Health check for container orchestration (21.2.1)
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+# No named volumes - using bind mount instead for direct host access

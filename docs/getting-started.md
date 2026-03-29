@@ -38,6 +38,7 @@ This guide walks you through setting up the gpt-discord-bot.
 - [Add Tools](add-tool.md)
 - [Set Up Personas](personas.md)
 - [Configure Azure Speech (TTS/STT)](azure-speech.md)
+- [Logging Configuration](logging.md)
 
 ## For AI Agents
 
